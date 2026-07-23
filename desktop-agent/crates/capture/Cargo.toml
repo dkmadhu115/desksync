@@ -1,0 +1,15 @@
+[package]
+name = "desksync-capture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Screen capture abstraction for the DeskSync desktop agent (ScreenCaptureKit / Windows DXGI / PipeWire)."
+
+[dependencies]
+desksync-core.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

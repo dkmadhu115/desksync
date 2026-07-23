@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend-go:
+    name: Backend (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: |
+            backend/pkg/go.sum
+            backend/services/*/go.sum
+      - name: Sync workspace
+        run: cd backend && go work sync
+      - name: Build
+        run: make build
+      - name: Vet
+        run: make vet
+      - name: Test (race + coverage)
+        run: make test
+
+  desktop-rust:
+    name: Desktop agent (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop-agent
+      - name: Format check
+        run: cd desktop-agent && cargo fmt --all -- --check
+      - name: Clippy
+        run: cd desktop-agent && cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cd desktop-agent && cargo test --all
+
+  mobile-flutter:
+    name: Mobile (Flutter)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Fetch packages
+        run: cd mobile && flutter pub get
+      - name: Analyze
+        run: cd mobile && flutter analyze
+      - name: Test
+        run: cd mobile && flutter test
+
+  openapi-lint:
+    name: OpenAPI lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Lint OpenAPI contract
+        run: npx --yes @redocly/cli@latest lint backend/api/openapi.yaml
+
+  migrations:
+    name: DB migrations (up/down)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: desksync
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: postgres
+      PGHOST: localhost
+      PGUSER: postgres
+      PGDATABASE: desksync
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install psql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Apply up migrations
+        run: |
+          set -e
+          for f in $(ls backend/migrations/*.up.sql | sort); do
+            echo ">> $f"
+            psql -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+      - name: Roll back down migrations
+        run: |
+          set -e
+          for f in $(ls backend/migrations/*.down.sql | sort -r); do
+            echo ">> $f"
+            psql -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+
+  docker-compose-validate:
+    name: docker compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate compose file
+        run: docker compose -f docker/docker-compose.yml config -q && echo "compose OK"

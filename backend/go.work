@@ -1,0 +1,14 @@
+go 1.25.0
+
+use (
+	./pkg
+	./services/auth
+	./services/device
+	./services/gateway
+	./services/monitoring
+	./services/notification
+	./services/pairing
+	./services/relay
+	./services/session
+	./services/signaling
+)

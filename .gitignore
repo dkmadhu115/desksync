@@ -1,0 +1,57 @@
+# ---- Secrets & environment ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.keystore
+secrets/
+
+# ---- Go ----
+/bin/
+backend/**/bin/
+/dist/
+*.exe
+*.test
+*.out
+coverage.out
+coverage.html
+vendor/
+
+# ---- Rust ----
+desktop-agent/target/
+**/target/
+**/*.rs.bk
+Cargo.lock.orig
+
+# ---- Flutter / Dart ----
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.packages
+mobile/build/
+mobile/ios/Pods/
+mobile/ios/.symlinks/
+mobile/android/.gradle/
+mobile/android/app/google-services.json
+mobile/ios/Runner/GoogleService-Info.plist
+*.iml
+
+# ---- Node (tooling) ----
+node_modules/
+
+# ---- Editors / OS ----
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.shared.json
+*.swp
+*~
+
+# ---- Build / test artifacts ----
+tmp/
+*.log
+.coverage/
+test-results/

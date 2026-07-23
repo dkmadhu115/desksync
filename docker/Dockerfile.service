@@ -1,0 +1,30 @@
+# Generic multi-stage Dockerfile for any Go backend service.
+# Build with the SERVICE build-arg, e.g.:
+#   docker build -f docker/Dockerfile.service --build-arg SERVICE=gateway backend
+#
+# Build context MUST be the `backend/` directory so both the shared `pkg`
+# module and the target service module are available (the service go.mod uses a
+# `replace` pointing at ../../pkg, resolved here as /src/pkg).
+
+# ---- Build stage ----
+FROM golang:1.25-alpine AS build
+ARG SERVICE
+RUN test -n "$SERVICE" || (echo "SERVICE build-arg is required" && false)
+RUN apk add --no-cache git ca-certificates
+WORKDIR /src
+
+# Copy shared module then the specific service module.
+COPY pkg ./pkg
+COPY services/${SERVICE} ./services/${SERVICE}
+
+WORKDIR /src/services/${SERVICE}
+# GOWORK=off so the module's own go.mod + replace directive are used.
+ENV GOWORK=off CGO_ENABLED=0
+RUN go mod download && go build -trimpath -ldflags="-s -w" -o /out/app ./cmd
+
+# ---- Runtime stage ----
+FROM gcr.io/distroless/static:nonroot
+COPY --from=build /out/app /app
+USER nonroot:nonroot
+# The concrete port is set via the service's *_HTTP_ADDR env var at runtime.
+ENTRYPOINT ["/app"]

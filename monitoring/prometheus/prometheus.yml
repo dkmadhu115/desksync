@@ -1,0 +1,24 @@
+# Prometheus scrape configuration for DeskSync.
+# Each service exposes /metrics via the shared pkg/httpx server. Static targets
+# here are for local docker-compose; Kubernetes uses ServiceMonitors in Phase 10.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    project: desksync
+
+scrape_configs:
+  - job_name: desksync-services
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - gateway:8080
+          - auth:8081
+          - device:8082
+          - session:8083
+          - pairing:8084
+          - signaling:8085
+          - relay:8086
+          - notification:8087
+          - monitoring:8088

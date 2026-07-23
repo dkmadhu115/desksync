@@ -1,0 +1,21 @@
+[package]
+name = "desksync-agent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "DeskSync desktop agent entrypoint. Hosts the Tauri configuration UI (added in a later phase) and runs the headless agent runtime."
+
+[[bin]]
+name = "desksync-agent"
+path = "src/main.rs"
+
+[dependencies]
+desksync-core.workspace = true
+desksync-capture.workspace = true
+desksync-input.workspace = true
+desksync-transport.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true

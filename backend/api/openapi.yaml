@@ -1,0 +1,457 @@
+openapi: 3.1.0
+info:
+  title: DeskSync API
+  version: 0.1.0
+  description: >
+    Public REST API for DeskSync, served by the API gateway at /api/v1. All
+    endpoints require TLS. Authenticated endpoints require a Bearer JWT access
+    token. This contract is stable from Phase 1; handlers are implemented in
+    later phases.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: http://localhost:8080
+    description: Local development (gateway)
+  - url: https://api.desksync.example.com
+    description: Production
+
+tags:
+  - name: auth
+    description: Authentication and token lifecycle
+  - name: devices
+    description: Device registration and management
+  - name: pairing
+    description: Pairing a mobile device with a desktop
+  - name: sessions
+    description: Remote-control session lifecycle
+
+paths:
+  /api/v1/auth/register:
+    post:
+      tags: [auth]
+      operationId: authRegister
+      summary: Register a new account with email + password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        '201':
+          description: Account created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      operationId: authLogin
+      summary: Log in with email + password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/v1/auth/oauth/{provider}/start:
+    get:
+      tags: [auth]
+      operationId: authOAuthStart
+      summary: Begin an OAuth authorization-code flow
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/OAuthProvider'
+      responses:
+        '302':
+          description: Redirect to the provider's consent screen
+
+  /api/v1/auth/oauth/{provider}/callback:
+    get:
+      tags: [auth]
+      operationId: authOAuthCallback
+      summary: OAuth redirect callback; exchanges the code for tokens
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/OAuthProvider'
+        - name: code
+          in: query
+          required: true
+          schema: { type: string }
+        - name: state
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [auth]
+      operationId: authRefresh
+      summary: Rotate the refresh token and mint a new access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200':
+          description: New token pair
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      operationId: authLogout
+      summary: Revoke the current refresh token
+      responses:
+        '204': { description: Logged out }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/devices:
+    get:
+      tags: [devices]
+      operationId: listDevices
+      summary: List the caller's devices
+      responses:
+        '200':
+          description: Device list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Device' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [devices]
+      operationId: registerDevice
+      summary: Register a new device (uploads the device public key)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceRegistration' }
+      responses:
+        '201':
+          description: Device registered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Device' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/devices/{deviceId}:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    get:
+      tags: [devices]
+      operationId: getDevice
+      summary: Fetch a single device
+      responses:
+        '200':
+          description: Device
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Device' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [devices]
+      operationId: deleteDevice
+      summary: Revoke and remove a device
+      responses:
+        '204': { description: Device revoked }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/pairing/initiate:
+    post:
+      tags: [pairing]
+      operationId: initiatePairing
+      summary: Start pairing; returns a QR payload and short manual code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [desktop_device_id]
+              properties:
+                desktop_device_id: { type: string, format: uuid }
+      responses:
+        '201':
+          description: Pairing initiated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PairingChallenge' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/pairing/confirm:
+    post:
+      tags: [pairing]
+      operationId: confirmPairing
+      summary: Confirm pairing from the mobile device using the code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pairing_id, code, mobile_device_id]
+              properties:
+                pairing_id: { type: string, format: uuid }
+                code: { type: string }
+                mobile_device_id: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Pairing confirmed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Pairing' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/sessions:
+    get:
+      tags: [sessions]
+      operationId: listSessions
+      summary: List recent sessions
+      responses:
+        '200':
+          description: Sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Session' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [sessions]
+      operationId: createSession
+      summary: Create a session for a pairing and obtain signaling/ICE config
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pairing_id]
+              properties:
+                pairing_id: { type: string, format: uuid }
+      responses:
+        '201':
+          description: Session created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionCreated' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/sessions/{sessionId}:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    get:
+      tags: [sessions]
+      operationId: getSession
+      summary: Fetch a session
+      responses:
+        '200':
+          description: Session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/sessions/{sessionId}/end:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    post:
+      tags: [sessions]
+      operationId: endSession
+      summary: End an active session
+      responses:
+        '200':
+          description: Session ended
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    OAuthProvider:
+      name: provider
+      in: path
+      required: true
+      schema: { type: string, enum: [google, github] }
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing or invalid credentials
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Resource already exists
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Too many requests
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error: { type: string, example: invalid_input }
+        message: { type: string }
+        request_id: { type: string }
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 12 }
+        display_name: { type: string }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    TokenPair:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string, example: Bearer }
+        expires_in: { type: integer, description: Access-token TTL in seconds }
+    DeviceRegistration:
+      type: object
+      required: [kind, platform, name, public_key]
+      properties:
+        kind: { type: string, enum: [desktop, mobile] }
+        platform: { type: string, enum: [windows, macos, linux, android, ios] }
+        name: { type: string }
+        public_key: { type: string, description: Base64 X25519 public key }
+        fcm_token: { type: string, description: Mobile push token (mobile only) }
+    Device:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [desktop, mobile] }
+        platform: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [online, offline] }
+        last_seen_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+    PairingChallenge:
+      type: object
+      properties:
+        pairing_id: { type: string, format: uuid }
+        qr_payload: { type: string, description: Opaque string to encode as a QR }
+        manual_code: { type: string, description: 8-digit human-enterable code }
+        expires_at: { type: string, format: date-time }
+    Pairing:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        mobile_device_id: { type: string, format: uuid }
+        desktop_device_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, active, revoked] }
+        trusted: { type: boolean }
+        created_at: { type: string, format: date-time }
+    Session:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        pairing_id: { type: string, format: uuid }
+        status: { type: string, enum: [initiating, connecting, active, ended, failed] }
+        connection_type: { type: [string, 'null'], enum: [p2p, relay, null] }
+        started_at: { type: string, format: date-time }
+        ended_at: { type: [string, 'null'], format: date-time }
+    IceServer:
+      type: object
+      properties:
+        urls:
+          type: array
+          items: { type: string }
+        username: { type: string }
+        credential: { type: string }
+    SessionCreated:
+      type: object
+      properties:
+        session:
+          $ref: '#/components/schemas/Session'
+        signaling_url:
+          type: string
+          description: Secure WebSocket URL for the signaling channel
+        signaling_ticket:
+          type: string
+          description: Short-lived token authorizing the WebSocket upgrade
+        ice_servers:
+          type: array
+          items: { $ref: '#/components/schemas/IceServer' }
+
+security:
+  - bearerAuth: []

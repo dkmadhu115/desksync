@@ -1,0 +1,46 @@
+# DeskSync desktop agent — Cargo workspace.
+#
+# The agent is a headless background daemon that captures the screen, injects
+# input, and streams over WebRTC, plus a small Tauri-based configuration UI.
+# It is split into focused crates so platform-specific code (capture/input) is
+# isolated behind traits and the core runtime stays testable.
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/capture",
+    "crates/input",
+    "crates/transport",
+    "crates/config-ui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "LicenseRef-Proprietary"
+authors = ["DeskSync"]
+repository = "https://example.com/desksync"
+
+# Centralized dependency versions shared by all crates.
+[workspace.dependencies]
+tokio = { version = "1.47", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+async-trait = "0.1"
+
+# Internal crates.
+desksync-core = { path = "crates/core" }
+desksync-capture = { path = "crates/capture" }
+desksync-input = { path = "crates/input" }
+desksync-transport = { path = "crates/transport" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
