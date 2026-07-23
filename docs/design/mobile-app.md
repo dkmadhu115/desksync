@@ -3,8 +3,27 @@
 The mobile client lets a developer control their laptop. It is a Flutter app
 using Riverpod for state, GoRouter for navigation, and Dio for HTTP. Phase 4
 delivers authentication, the device list, pairing (manual-code), and the remote
-viewer with full touch/keyboard controls. The live video and data channel arrive
-in Phase 5; QR scanning and the trust handshake in Phase 6.
+viewer with full touch/keyboard controls. Phase 5 adds the WebRTC connection
+plane (below); QR scanning and the trust handshake land in Phase 6, and wiring
+the live video (`RTCVideoView`) and data-channel input sink into the viewer UI
+lands in Phase 7.
+
+## WebRTC connection plane (Phase 5)
+
+The controller (mobile) is the WebRTC **offerer**. `session/` creates a session
+via `POST /api/v1/sessions` and receives the signaling URL + ticket and ICE
+servers (`SessionCreated`). `signaling/` holds the wire protocol
+(`SignalEnvelope` mirroring the backend and Rust agent) and a `SignalingClient`
+over `dart:io` `WebSocket` (monotonic nonce, heartbeats, decoded message
+stream). `viewer/application/webrtc_session.dart` orchestrates the
+`RTCPeerConnection`: it opens a reliable `input` data channel, adds a
+`recvonly` video transceiver, waits for the agent's `peer_joined`, then
+exchanges the offer/answer and trickled ICE. Outgoing input flows through a
+`DataChannelInputSink` (the same `InputSink` interface the viewer already
+uses); an `AdaptiveBitrateController` (loss-based AIMD, mirroring the agent)
+guides quality. The pure pieces — session/signaling models, the input sink, the
+signaling client, and adaptive bitrate — are unit-tested; the `flutter_webrtc`
+peer itself is exercised in device/end-to-end testing.
 
 ## Architecture
 

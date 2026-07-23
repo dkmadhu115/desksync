@@ -13,6 +13,14 @@ use async_trait::async_trait;
 use desksync_core::error::Result;
 use serde::{Deserialize, Serialize};
 
+pub mod bitrate;
+pub mod negotiation;
+pub mod ws;
+
+pub use bitrate::{AdaptiveBitrateController, BitrateDecision, BitrateLimits, NetworkSample};
+pub use negotiation::{NegotiationAction, NegotiationRole, NegotiationState};
+pub use ws::WebSocketSignaling;
+
 /// The signaling message envelope exchanged over the WebSocket. It mirrors the
 /// backend protocol documented in `docs/design/api.md`. Every message carries a
 /// monotonic nonce and timestamp for replay protection.
@@ -55,6 +63,39 @@ pub enum SignalPayload {
     Heartbeat,
     /// Peer requested the session be torn down.
     Bye,
+    /// Server control: the other peer joined the session.
+    PeerJoined {
+        /// Role of the peer that joined ("controller" or "agent").
+        role: String,
+    },
+    /// Server control: the other peer left the session.
+    PeerLeft {
+        /// Role of the peer that left ("controller" or "agent").
+        role: String,
+    },
+}
+
+impl SignalEnvelope {
+    /// Build a v1 envelope for the given session and payload, stamping the
+    /// current time in milliseconds. The caller supplies the monotonic nonce.
+    pub fn new(session_id: impl Into<String>, nonce: u64, payload: SignalPayload) -> Self {
+        Self {
+            v: 1,
+            nonce,
+            ts_ms: now_ms(),
+            session_id: session_id.into(),
+            payload,
+        }
+    }
+}
+
+/// Current Unix time in milliseconds (0 if the clock is before the epoch).
+fn now_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Backend-agnostic signaling transport. Implementations manage the WebSocket

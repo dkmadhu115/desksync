@@ -13,7 +13,7 @@ and the runtime stays testable.
 | `desksync-core` | Runtime (`Agent`), `Subsystem` trait + health model, config, unified error, **device identity (X25519)**, **on-disk persistence**, **single-instance lock**, **autostart** |
 | `desksync-capture` | `ScreenCapturer` trait, `Frame`/`Monitor` model, pure frame-scaling utils, the `CaptureLoop` service, and the native `XcapCapturer` |
 | `desksync-input` | `InputInjector` trait + event model, pure coordinate/keycode `mapping`, `Clipboard` abstraction, and the native `EnigoInjector` |
-| `desksync-transport` | Signaling envelope + `SignalingTransport` trait, `ReplayGuard` (WebRTC lands in Phase 5) |
+| `desksync-transport` | Signaling envelope + `SignalingTransport` trait & `ReplayGuard`; the `WebSocketSignaling` client (tokio-tungstenite + rustls), the pure `NegotiationState` machine (offer/answer/ICE), and the `AdaptiveBitrateController` (loss-based AIMD). The `webrtc` media peer (encoder → RTP) is wired behind `native` alongside capture in Phase 7 |
 | `desksync-agent` (config-ui) | Process entrypoint: tracing, single-instance, config+identity, subsystem wiring, graceful shutdown |
 
 ## Subsystem model

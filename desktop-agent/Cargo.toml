@@ -32,6 +32,10 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 async-trait = "0.1"
+# WebSocket signaling client. tokio-tungstenite + rustls is pure Rust (no system
+# OpenSSL), so it builds and is tested on headless Linux CI as well.
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
 
 # Pure-Rust dependencies (always compiled; no system libraries required, so
 # they build and are unit-tested everywhere including headless Linux CI).
