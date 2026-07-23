@@ -19,3 +19,9 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
+
+[features]
+# Build the agent with the real capture/input/clipboard backends. Off by
+# default so `cargo build` works on headless CI; enabled on macOS/Windows/Linux
+# desktop builds: `cargo build -p desksync-agent --features native`.
+native = ["desksync-capture/native", "desksync-input/native"]

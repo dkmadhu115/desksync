@@ -68,7 +68,7 @@ jobs:
         run: cd backend/services/auth && GOWORK=off go test ./internal/service/... -run Integration -v
 
   desktop-rust:
-    name: Desktop agent (Rust)
+    name: Desktop agent (Rust, default)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -78,12 +78,37 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop-agent
+      # The default feature set is intentionally free of system libraries and
+      # displays, so it builds, lints, and tests on headless Linux.
       - name: Format check
         run: cd desktop-agent && cargo fmt --all -- --check
       - name: Clippy
         run: cd desktop-agent && cargo clippy --all-targets -- -D warnings
       - name: Test
         run: cd desktop-agent && cargo test --all
+
+  desktop-rust-native:
+    name: Desktop agent (Rust, native backends)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop-agent
+      # The `native` feature pulls in ScreenCaptureKit/CGEvent/NSPasteboard
+      # backends (via xcap/enigo/arboard). We build and lint them on macOS; the
+      # code paths that need a display or accessibility permission are not
+      # exercised in CI (only pure logic is unit-tested), but this guarantees
+      # the native backends always compile and stay clippy-clean.
+      - name: Clippy (native)
+        run: cd desktop-agent && cargo clippy -p desksync-agent --features native --all-targets -- -D warnings
+      - name: Build (native)
+        run: cd desktop-agent && cargo build -p desksync-agent --features native
+      - name: Test (native)
+        run: cd desktop-agent && cargo test -p desksync-agent --features native
 
   mobile-flutter:
     name: Mobile (Flutter)

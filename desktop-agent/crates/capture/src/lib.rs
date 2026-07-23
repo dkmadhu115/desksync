@@ -2,9 +2,10 @@
 //!
 //! The [`ScreenCapturer`] trait hides the per-platform capture backend:
 //! ScreenCaptureKit on macOS, DXGI Desktop Duplication on Windows, and PipeWire
-//! on Linux. Phase 1 ships the trait, a [`Monitor`]/[`Frame`] model, and a
-//! [`NoopCapturer`] so the agent runtime compiles and is testable. Real
-//! backends are implemented in Phase 3.
+//! on Linux. This crate ships the trait, a [`Monitor`]/[`Frame`] model, a
+//! [`NoopCapturer`] for tests, pure frame-scaling utilities ([`frame`]), and
+//! the [`pipeline::CaptureLoop`] runtime. The real backend
+//! ([`native::XcapCapturer`]) is compiled behind the `native` feature.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -13,6 +14,17 @@ use async_trait::async_trait;
 use desksync_core::error::Result;
 use desksync_core::subsystem::{HealthStatus, Subsystem};
 use std::sync::atomic::{AtomicBool, Ordering};
+
+pub mod frame;
+pub mod pipeline;
+
+#[cfg(feature = "native")]
+pub mod native;
+
+pub use pipeline::{CaptureLoop, CaptureSettings};
+
+#[cfg(feature = "native")]
+pub use native::XcapCapturer;
 
 /// A display attached to the host, enumerated for multi-monitor support.
 #[derive(Debug, Clone, PartialEq, Eq)]

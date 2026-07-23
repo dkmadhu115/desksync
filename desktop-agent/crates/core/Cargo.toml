@@ -12,6 +12,12 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 async-trait.workspace = true
+x25519-dalek.workspace = true
+getrandom.workspace = true
+hex.workspace = true
+fs4.workspace = true
+dirs.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
+tempfile = "3"

@@ -14,6 +14,8 @@ Design artifacts for the DeskSync remote-desktop system. See the root
 - [Security design](design/security.md) — auth, E2E crypto, pinning, replay
   protection, revocation, rate limiting.
 - [Threat model](design/threat-model.md) — STRIDE per trust boundary.
+- [Desktop agent](design/desktop-agent.md) — crate layout, subsystem model, the
+  `native` feature, capture pipeline, input mapping, and device identity.
 
 ## Architecture Decision Records
 
@@ -21,6 +23,7 @@ Design artifacts for the DeskSync remote-desktop system. See the root
 - [ADR 0002 — Monitoring is infrastructure](adr/0002-monitoring-is-infrastructure.md)
 - [ADR 0003 — Go workspace with per-service modules](adr/0003-go-workspace-per-service-modules.md)
 - [ADR 0004 — WebRTC with E2E encryption and TURN fallback](adr/0004-webrtc-with-e2e-encryption.md)
+- [ADR 0005 — Desktop agent native backends behind a feature](adr/0005-desktop-agent-native-backends.md)
 
 ## Phase status
 

@@ -62,8 +62,16 @@ run-%: ## Run a service, e.g. `make run-gateway`
 # Desktop agent (Rust)
 # ---------------------------------------------------------------------------
 .PHONY: agent-build
-agent-build: ## Build the Rust desktop agent
+agent-build: ## Build the Rust desktop agent (no-op backends; portable)
 	cd $(AGENT_DIR) && cargo build
+
+.PHONY: agent-build-native
+agent-build-native: ## Build the agent with real capture/input/clipboard backends
+	cd $(AGENT_DIR) && cargo build -p desksync-agent --features native
+
+.PHONY: agent-run-native
+agent-run-native: ## Run the agent with native backends (needs OS permissions)
+	cd $(AGENT_DIR) && cargo run -p desksync-agent --features native
 
 .PHONY: agent-test
 agent-test: ## Test the Rust desktop agent

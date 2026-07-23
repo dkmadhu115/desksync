@@ -11,6 +11,17 @@ desksync-core.workspace = true
 serde.workspace = true
 async-trait.workspace = true
 tracing.workspace = true
+tokio = { workspace = true }
+# Native input-injection and clipboard backends. Optional; enabled via the
+# `native` feature. enigo -> SendInput/CGEvent/uinput; arboard -> NSPasteboard/
+# Win clipboard/X11+Wayland.
+enigo = { workspace = true, optional = true }
+arboard = { workspace = true, optional = true }
+
+[features]
+# Enables the real OS input + clipboard backends. Off by default so the crate
+# builds and tests headlessly (no display / accessibility permissions needed).
+native = ["dep:enigo", "dep:arboard"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }

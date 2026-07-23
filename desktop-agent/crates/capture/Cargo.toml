@@ -10,6 +10,15 @@ description = "Screen capture abstraction for the DeskSync desktop agent (Screen
 desksync-core.workspace = true
 async-trait.workspace = true
 tracing.workspace = true
+tokio = { workspace = true }
+# Native screen-capture backend (ScreenCaptureKit / DXGI / PipeWire under the
+# hood). Optional; enabled via the `native` feature.
+xcap = { workspace = true, optional = true }
+
+[features]
+# Enables the real, platform-specific capture backend. Off by default so the
+# crate builds and tests without a display or system capture libraries.
+native = ["dep:xcap"]
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt", "macros"] }
+tokio = { workspace = true, features = ["rt", "macros", "time"] }

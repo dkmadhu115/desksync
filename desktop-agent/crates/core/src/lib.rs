@@ -14,12 +14,20 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod autostart;
 pub mod config;
 pub mod error;
+pub mod identity;
+pub mod single_instance;
+pub mod store;
 pub mod subsystem;
 
+pub use autostart::Autostart;
 pub use config::AgentConfig;
 pub use error::{AgentError, Result};
+pub use identity::DeviceIdentity;
+pub use single_instance::SingleInstance;
+pub use store::AgentStore;
 pub use subsystem::{HealthStatus, Subsystem};
 
 use std::sync::Arc;

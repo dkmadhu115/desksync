@@ -2,8 +2,10 @@
 //!
 //! Translates high-level input events received from the mobile client into
 //! host OS input events (Windows SendInput, macOS CGEvent, Linux uinput/XTest).
-//! Phase 1 defines the event model and the [`InputInjector`] trait with a
-//! [`NoopInjector`]; real backends arrive in Phase 3/7.
+//! This crate defines the event model, the [`InputInjector`] trait with a
+//! [`NoopInjector`], pure coordinate/keycode [`mapping`], a [`clipboard`]
+//! abstraction, and the native `enigo`/`arboard` backend (behind the `native`
+//! feature).
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -13,6 +15,17 @@ use desksync_core::error::Result;
 use desksync_core::subsystem::{HealthStatus, Subsystem};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+pub mod clipboard;
+pub mod mapping;
+
+#[cfg(feature = "native")]
+pub mod native;
+
+pub use clipboard::{Clipboard, NoopClipboard};
+
+#[cfg(feature = "native")]
+pub use native::EnigoInjector;
 
 /// Modifier keys that can accompany a key or pointer event.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

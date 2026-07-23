@@ -29,6 +29,14 @@ pub enum AgentError {
     #[error("offline: operation refused until connectivity is restored")]
     Offline,
 
+    /// A cryptographic operation (key generation, ECDH, encoding) failed.
+    #[error("crypto error: {0}")]
+    Crypto(String),
+
+    /// Serialization/deserialization of persisted state failed.
+    #[error("serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+
     /// Wraps an underlying I/O error.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),

@@ -33,6 +33,23 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 async-trait = "0.1"
 
+# Pure-Rust dependencies (always compiled; no system libraries required, so
+# they build and are unit-tested everywhere including headless Linux CI).
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+getrandom = "0.2"
+hex = "0.4"
+fs4 = { version = "0.13", features = ["sync"] }
+dirs = "6"
+
+# Native platform backends. These pull in system libraries and/or need a real
+# display + OS permissions, so they are OPTIONAL and enabled only via each
+# crate's `native` cargo feature (off by default). This keeps the default build
+# dependency-free and fully testable; the real backends are built and linted on
+# a macOS CI runner and on developer machines.
+xcap = "0.9"
+enigo = "0.6"
+arboard = "3"
+
 # Internal crates.
 desksync-core = { path = "crates/core" }
 desksync-capture = { path = "crates/capture" }

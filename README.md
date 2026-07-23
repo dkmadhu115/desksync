@@ -49,8 +49,8 @@ specification and [`docs/`](docs/) for design artifacts.
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 1 | Planning, architecture, folder structure, DB/API/security design, threat model, CI skeleton | ✅ done |
-| 2 | Backend foundation (auth, JWT, DB, Redis, logging, config) | ✅ current |
-| 3 | Rust desktop agent (capture, keyboard/mouse injection, clipboard) | pending |
+| 2 | Backend foundation (auth, JWT, DB, Redis, logging, config) | ✅ done |
+| 3 | Rust desktop agent (capture, keyboard/mouse injection, clipboard) | ✅ current |
 | 4 | Flutter mobile (auth, pairing, device list, viewer, touch controls) | pending |
 | 5 | WebRTC (signaling, peer connection, streaming, adaptive bitrate) | pending |
 | 6 | Device pairing (QR, trust, persistent pairing) | pending |
