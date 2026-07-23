@@ -34,6 +34,8 @@ type Spec struct {
 	Version string
 	// ShutdownTimeout bounds graceful shutdown; defaults to 15s when zero.
 	ShutdownTimeout time.Duration
+	// ReadinessChecks are evaluated on GET /ready.
+	ReadinessChecks []httpx.ReadinessCheck
 }
 
 // RegisterFunc lets a service attach its domain routes to the shared app.
@@ -65,10 +67,11 @@ func Run(spec Spec, register RegisterFunc) {
 	metrics := observability.NewMetrics(base.ServiceName)
 
 	app := httpx.New(httpx.Options{
-		Base:    base,
-		Logger:  log,
-		Metrics: metrics,
-		Version: spec.Version,
+		Base:            base,
+		Logger:          log,
+		Metrics:         metrics,
+		Version:         spec.Version,
+		ReadinessChecks: spec.ReadinessChecks,
 	})
 
 	if register != nil {

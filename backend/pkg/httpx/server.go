@@ -5,6 +5,7 @@
 package httpx
 
 import (
+	"context"
 	"log/slog"
 	"time"
 
@@ -16,6 +17,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// ReadinessCheck reports whether a dependency is ready to serve traffic.
+type ReadinessCheck struct {
+	Name  string
+	Check func(context.Context) error
+}
+
 // Options configures the shared Fiber server.
 type Options struct {
 	Base    config.Base
@@ -23,6 +30,8 @@ type Options struct {
 	Metrics *observability.Metrics
 	// Version is reported by the /health endpoint.
 	Version string
+	// ReadinessChecks are evaluated on GET /ready; any failure yields 503.
+	ReadinessChecks []ReadinessCheck
 }
 
 // New constructs a Fiber app with the standard DeskSync middleware stack and
@@ -61,8 +70,18 @@ func registerOps(app *fiber.App, opts Options) {
 		})
 	})
 
-	// Readiness is a placeholder in Phase 1; later phases check DB/Redis.
+	// Readiness evaluates each registered dependency check.
 	app.Get("/ready", func(c *fiber.Ctx) error {
+		ctx, cancel := context.WithTimeout(c.Context(), 3*time.Second)
+		defer cancel()
+		for _, rc := range opts.ReadinessChecks {
+			if err := rc.Check(ctx); err != nil {
+				return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+					"status":     "not_ready",
+					"dependency": rc.Name,
+				})
+			}
+		}
 		return c.JSON(fiber.Map{"status": "ready"})
 	})
 
