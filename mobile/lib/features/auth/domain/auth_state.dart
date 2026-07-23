@@ -1,6 +1,6 @@
 /// High-level authentication status for the app.
 enum AuthStatus {
-  /// Initial/unknown state before any check has run.
+  /// Initial/unknown state before the launch bootstrap has run.
   unknown,
 
   /// The user is not signed in.
@@ -34,7 +34,11 @@ class AuthState {
   /// Whether the user is authenticated.
   bool get isAuthenticated => status == AuthStatus.authenticated;
 
-  /// Returns a copy with the given fields replaced.
+  /// Whether an auth request is currently in flight.
+  bool get isBusy => status == AuthStatus.authenticating;
+
+  /// Returns a copy with the given fields replaced. [errorMessage] is always
+  /// replaced (pass null to clear it) so stale errors don't linger.
   AuthState copyWith({
     AuthStatus? status,
     String? userEmail,

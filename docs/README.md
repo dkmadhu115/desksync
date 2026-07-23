@@ -16,6 +16,8 @@ Design artifacts for the DeskSync remote-desktop system. See the root
 - [Threat model](design/threat-model.md) — STRIDE per trust boundary.
 - [Desktop agent](design/desktop-agent.md) — crate layout, subsystem model, the
   `native` feature, capture pipeline, input mapping, and device identity.
+- [Mobile app](design/mobile-app.md) — Flutter architecture, auth/session
+  lifecycle, devices/pairing, and the touch-control input pipeline.
 
 ## Architecture Decision Records
 
