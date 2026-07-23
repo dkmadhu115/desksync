@@ -1,6 +1,9 @@
 package config
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // PostgresConfig holds PostgreSQL connection settings. Prefer DATABASE_URL when
 // set; otherwise the discrete fields are assembled into a DSN.
@@ -67,6 +70,63 @@ func LoadJWT() JWTConfig {
 		RefreshTTL:    GetDuration("JWT_REFRESH_TTL", 720*time.Hour),
 		Issuer:        GetString("JWT_ISSUER", "desksync"),
 	}
+}
+
+// SignalingConfig holds the shared secret and TTL for signaling tickets. The
+// session service issues tickets and the signaling service verifies them, so
+// both read the same SIGNALING_TICKET_SECRET.
+type SignalingConfig struct {
+	TicketSecret string
+	TicketTTL    time.Duration
+	// PublicURL is the externally reachable base WebSocket URL of the signaling
+	// service, returned to clients in the session response.
+	PublicURL string
+}
+
+// LoadSignaling reads signaling configuration from the environment.
+func LoadSignaling() SignalingConfig {
+	return SignalingConfig{
+		TicketSecret: GetString("SIGNALING_TICKET_SECRET", ""),
+		TicketTTL:    GetDuration("SIGNALING_TICKET_TTL", 2*time.Minute),
+		PublicURL:    GetString("SIGNALING_PUBLIC_URL", "ws://localhost:8085/api/v1/signaling/ws"),
+	}
+}
+
+// ICEConfig holds STUN/TURN server configuration used to build the ICE server
+// list returned to clients. TURN credentials are time-limited and derived per
+// session using the TURN REST API (coturn "use-auth-secret") scheme, so no
+// static TURN password is ever handed to clients.
+type ICEConfig struct {
+	STUNURLs   []string
+	TURNURLs   []string
+	TURNSecret string
+	// CredentialTTL bounds the lifetime of a generated TURN credential.
+	CredentialTTL time.Duration
+}
+
+// LoadICE reads ICE configuration from the environment. STUN_URLS and TURN_URLS
+// are comma-separated.
+func LoadICE() ICEConfig {
+	return ICEConfig{
+		STUNURLs:      splitCSV(GetString("STUN_URLS", "stun:stun.l.google.com:19302")),
+		TURNURLs:      splitCSV(GetString("TURN_URLS", "")),
+		TURNSecret:    GetString("TURN_STATIC_AUTH_SECRET", ""),
+		CredentialTTL: GetDuration("TURN_CREDENTIAL_TTL", time.Hour),
+	}
+}
+
+func splitCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // OAuthProviderConfig holds a single OAuth provider's credentials.

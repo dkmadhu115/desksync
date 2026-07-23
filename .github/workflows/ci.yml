@@ -36,7 +36,7 @@ jobs:
         run: make test
 
   backend-integration:
-    name: Backend integration (auth)
+    name: Backend integration (auth + session)
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -66,6 +66,8 @@ jobs:
           go-version: "1.25"
       - name: Auth integration tests
         run: cd backend/services/auth && GOWORK=off go test ./internal/service/... -run Integration -v
+      - name: Session integration tests
+        run: cd backend/services/session && GOWORK=off go test ./internal/service/... -run Integration -v
 
   desktop-rust:
     name: Desktop agent (Rust, default)

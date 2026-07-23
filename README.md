@@ -51,8 +51,8 @@ specification and [`docs/`](docs/) for design artifacts.
 | 1 | Planning, architecture, folder structure, DB/API/security design, threat model, CI skeleton | ✅ done |
 | 2 | Backend foundation (auth, JWT, DB, Redis, logging, config) | ✅ done |
 | 3 | Rust desktop agent (capture, keyboard/mouse injection, clipboard) | ✅ done |
-| 4 | Flutter mobile (auth, pairing, device list, viewer, touch controls) | ✅ current |
-| 5 | WebRTC (signaling, peer connection, streaming, adaptive bitrate) | pending |
+| 4 | Flutter mobile (auth, pairing, device list, viewer, touch controls) | ✅ done |
+| 5 | WebRTC (signaling plane: session tickets, ICE, WebSocket relay; clients in progress) | ✅ current |
 | 6 | Device pairing (QR, trust, persistent pairing) | pending |
 | 7 | Remote desktop (rendering, keyboard, mouse, clipboard) | pending |
 | 8 | Developer features (VS Code, Cursor, Git, Docker, kubectl, SSH) | pending |

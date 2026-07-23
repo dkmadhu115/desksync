@@ -21,6 +21,19 @@ x-service-base: &service-base
     LOG_FORMAT: ${LOG_FORMAT:-json}
     DATABASE_URL: postgres://${POSTGRES_USER:-desksync}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-desksync}?sslmode=disable
     REDIS_ADDR: redis:6379
+    # JWT signing secrets (auth issues, other services verify access tokens).
+    JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev-access-secret-change-me-0123456789}
+    JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-dev-refresh-secret-change-me-0123456789}
+    # Signaling ticket secret, shared by session (issuer) and signaling (verifier).
+    SIGNALING_TICKET_SECRET: ${SIGNALING_TICKET_SECRET:-dev-signaling-secret-change-me-0123456789}
+    SIGNALING_TICKET_TTL: ${SIGNALING_TICKET_TTL:-2m}
+    # URL returned to clients so they can reach the signaling WebSocket.
+    SIGNALING_PUBLIC_URL: ${SIGNALING_PUBLIC_URL:-ws://localhost:8085/api/v1/signaling/ws}
+    # ICE configuration (STUN always; TURN via coturn with time-limited creds).
+    STUN_URLS: ${STUN_URLS:-stun:stun.l.google.com:19302}
+    TURN_URLS: ${TURN_URLS:-turn:coturn:3478}
+    TURN_STATIC_AUTH_SECRET: ${TURN_STATIC_AUTH_SECRET:-change-me-turn-secret}
+    TURN_CREDENTIAL_TTL: ${TURN_CREDENTIAL_TTL:-1h}
 
 services:
   postgres:

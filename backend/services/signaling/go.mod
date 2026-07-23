@@ -4,6 +4,8 @@ go 1.25.0
 
 require (
 	github.com/desksync/backend/pkg v0.0.0
+	github.com/fasthttp/websocket v1.5.8
+	github.com/gofiber/contrib/websocket v1.3.4
 	github.com/gofiber/fiber/v2 v2.52.14
 )
 
@@ -22,8 +24,10 @@ require (
 	github.com/prometheus/common v0.70.0 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
+	github.com/savsgio/gotils v0.0.0-20240303185622-093b76447511 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.72.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
