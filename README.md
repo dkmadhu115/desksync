@@ -54,8 +54,8 @@ specification and [`docs/`](docs/) for design artifacts.
 | 4 | Flutter mobile (auth, pairing, device list, viewer, touch controls) | ✅ done |
 | 5 | WebRTC (signaling plane: session tickets, ICE, WebSocket relay; clients in progress) | ✅ done |
 | 6 | Device pairing (device registration + presence, QR/manual codes, trust, persistent pairing; agent enrollment + pairing initiation) | ✅ done |
-| 7 | Remote desktop (live video rendering, keyboard, mouse, clipboard over the WebRTC data channel) | ✅ current |
-| 8 | Developer features (VS Code, Cursor, Git, Docker, kubectl, SSH) | pending |
+| 7 | Remote desktop (live video rendering, keyboard, mouse, clipboard over the WebRTC data channel) | ✅ done |
+| 8 | Developer features (Quick Launch editors/terminals, saved workspaces, curated Git/Docker/kubectl/Helm/SSH shortcuts over an allowlisted control channel) | ✅ current |
 | 9 | Security hardening (certificates, replay protection, encryption) | pending |
 | 10 | Production deployment (Docker, K8s, Helm, CI/CD, monitoring) | pending |
 

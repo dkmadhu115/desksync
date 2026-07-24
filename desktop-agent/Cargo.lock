@@ -530,8 +530,10 @@ dependencies = [
  "desksync-backend",
  "desksync-capture",
  "desksync-core",
+ "desksync-devtools",
  "desksync-input",
  "desksync-transport",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -579,6 +581,18 @@ dependencies = [
  "tokio",
  "tracing",
  "x25519-dalek",
+]
+
+[[package]]
+name = "desksync-devtools"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

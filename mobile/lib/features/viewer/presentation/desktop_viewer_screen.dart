@@ -82,6 +82,11 @@ class _DesktopViewerScreenState extends ConsumerState<DesktopViewerScreen> {
         title: Text('Device ${widget.deviceId}'),
         actions: [
           IconButton(
+            tooltip: 'Quick Launch',
+            icon: const Icon(Icons.rocket_launch),
+            onPressed: () => context.push(Routes.quickLaunch),
+          ),
+          IconButton(
             tooltip: 'Disconnect',
             icon: const Icon(Icons.close),
             onPressed: () => context.go(Routes.devices),

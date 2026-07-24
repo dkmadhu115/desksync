@@ -125,6 +125,30 @@ The UI renders per phase (`resolving`/`connecting`/`connected`/`noPairing`/
 failure/no-pairing branches are unit-tested via injected callbacks; the
 `flutter_webrtc` peer is exercised on real devices.
 
+## Developer Quick Launch (Phase 8)
+
+`features/devtools/` lets the user trigger workstation actions on the connected
+desktop — launch editors (VS Code/Cursor/Claude) or terminals, run curated
+Git/Docker/kubectl/Helm shortcuts, and SSH into saved hosts.
+
+- `domain/dev_action.dart` mirrors the agent's closed wire contract (flattened
+  `action` discriminator, snake_case enums, **id-only** references to workspaces
+  and hosts — never raw paths or commands). `domain/dev_catalog.dart` mirrors the
+  agent's shortcut catalog for the UI.
+- Actions flow over a second, reliable **`control`** data channel (opened by
+  `WebRtcSession` alongside `input`) so they never block latency-sensitive input.
+  A `SwitchableControlSink` (same pattern as the input sink) is attached by the
+  `ViewerController` on connect and detached on teardown.
+- `DevActionController` assigns a correlation id, serializes, and dispatches;
+  `presentation/quick_launch_screen.dart` (reached from the viewer app bar)
+  renders the editors/terminals/shortcuts/SSH form.
+
+Shortcuts that need a workspace are disabled until a workspace id is entered. The
+agent re-validates every request against its allowlist; advertising the real
+registries and streaming command output back rides on the native peer's control
+receive path. Unit tests cover the wire serialization, the switchable control
+sink, and the controller dispatch/count.
+
 ## Testing
 
 `flutter analyze` is clean and `flutter test` covers: auth flows (login,

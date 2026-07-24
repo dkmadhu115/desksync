@@ -22,6 +22,8 @@ Design artifacts for the DeskSync remote-desktop system. See the root
   `native` feature, capture pipeline, input mapping, and device identity.
 - [Mobile app](design/mobile-app.md) — Flutter architecture, auth/session
   lifecycle, devices/pairing, and the touch-control input pipeline.
+- [Developer features](design/devtools.md) — Quick Launch editors/terminals,
+  saved workspaces, curated tool shortcuts, and the allowlisted control channel.
 
 ## Architecture Decision Records
 
@@ -32,6 +34,7 @@ Design artifacts for the DeskSync remote-desktop system. See the root
 - [ADR 0005 — Desktop agent native backends behind a feature](adr/0005-desktop-agent-native-backends.md)
 - [ADR 0006 — Stateless, ticket-authorized signaling](adr/0006-stateless-signaling-tickets.md)
 - [ADR 0007 — Ephemeral, hashed pairing challenges in Redis](adr/0007-ephemeral-pairing-challenges.md)
+- [ADR 0008 — Allowlisted developer actions (no remote command execution)](adr/0008-devtools-allowlist.md)
 
 ## Phase status
 

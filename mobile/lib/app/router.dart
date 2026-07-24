@@ -6,6 +6,7 @@ import '../features/auth/application/auth_controller.dart';
 import '../features/auth/domain/auth_state.dart';
 import '../features/auth/presentation/login_screen.dart';
 import '../features/devices/presentation/device_list_screen.dart';
+import '../features/devtools/presentation/quick_launch_screen.dart';
 import '../features/pairing/presentation/pairing_screen.dart';
 import '../features/viewer/presentation/desktop_viewer_screen.dart';
 import 'splash_screen.dart';
@@ -16,6 +17,7 @@ abstract final class Routes {
   static const login = '/login';
   static const devices = '/devices';
   static const pairing = '/pairing';
+  static const quickLaunch = '/quick-launch';
 
   /// Viewer route template; use [viewerPath] to build a concrete path.
   static const viewer = '/viewer/:deviceId';
@@ -73,6 +75,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: Routes.pairing,
         builder: (context, state) => const PairingScreen(),
+      ),
+      GoRoute(
+        path: Routes.quickLaunch,
+        builder: (context, state) => const QuickLaunchScreen(),
       ),
       GoRoute(
         path: Routes.viewer,

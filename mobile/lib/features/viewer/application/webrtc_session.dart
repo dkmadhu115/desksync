@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
+import '../../devtools/application/control_sink.dart';
 import '../../session/domain/session.dart';
 import '../../signaling/data/signaling_client.dart';
 import '../../signaling/domain/signal_envelope.dart';
@@ -58,12 +59,18 @@ class WebRtcSession {
 
   RTCPeerConnection? _pc;
   RTCDataChannel? _inputChannel;
+  RTCDataChannel? _controlChannel;
   StreamSubscription<SignalEnvelope>? _sub;
   DataChannelInputSink? _inputSink;
+  ControlSink? _controlSink;
 
   /// The sink that forwards input events to the desktop, available once
   /// [start] has created the data channel.
   InputSink? get inputSink => _inputSink;
+
+  /// The sink that forwards developer control actions to the desktop, available
+  /// once [start] has created the control data channel.
+  ControlSink? get controlSink => _controlSink;
 
   /// Establish the connection: set up the peer connection and data channel,
   /// connect signaling, and begin negotiation when the agent appears.
@@ -88,6 +95,18 @@ class WebRtcSession {
     _inputChannel = channel;
     _inputSink = DataChannelInputSink(
       (frame) => channel.send(RTCDataChannelMessage(frame)),
+    );
+
+    // Reliable, ordered channel for developer control actions (Quick Launch),
+    // separate from input so control payloads never block latency-sensitive
+    // pointer/key frames.
+    final control = await pc.createDataChannel(
+      'control',
+      RTCDataChannelInit()..ordered = true,
+    );
+    _controlChannel = control;
+    _controlSink = CallbackControlSink(
+      (frame) => control.send(RTCDataChannelMessage(frame)),
     );
 
     pc.onIceCandidate = (candidate) {
@@ -163,6 +182,7 @@ class WebRtcSession {
     }
     await _signaling.close();
     await _inputChannel?.close();
+    await _controlChannel?.close();
     await _pc?.close();
     await remoteRenderer.dispose();
   }

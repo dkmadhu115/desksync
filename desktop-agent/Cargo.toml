@@ -12,6 +12,7 @@ members = [
     "crates/input",
     "crates/transport",
     "crates/backend",
+    "crates/devtools",
     "crates/config-ui",
 ]
 
@@ -67,6 +68,7 @@ desksync-capture = { path = "crates/capture" }
 desksync-input = { path = "crates/input" }
 desksync-transport = { path = "crates/transport" }
 desksync-backend = { path = "crates/backend" }
+desksync-devtools = { path = "crates/devtools" }
 
 [profile.release]
 opt-level = 3

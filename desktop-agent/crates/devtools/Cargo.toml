@@ -1,0 +1,18 @@
+[package]
+name = "desksync-devtools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Developer quick-launch and tool-shortcut engine for the DeskSync agent: an allowlisted, shell-free catalog of editor/terminal launches and Git/Docker/kubectl/Helm/SSH shortcuts driven from the phone."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true, features = ["process", "time", "io-util"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "process", "time", "io-util"] }

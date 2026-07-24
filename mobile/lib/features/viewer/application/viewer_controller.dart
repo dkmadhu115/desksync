@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
+import '../../devtools/application/control_sink.dart';
 import '../../pairing/data/pairing_repository.dart';
 import '../../pairing/domain/pairing.dart';
 import '../../session/data/session_api.dart';
@@ -52,11 +53,13 @@ class ViewerController extends ChangeNotifier {
     required Future<SessionCreated> Function(String pairingId) createSession,
     required WebRtcSession Function(SessionCreated created) sessionFactory,
     required SwitchableInputSink inputSink,
+    SwitchableControlSink? controlSink,
     Future<void> Function(String sessionId)? endSession,
   })  : _resolvePairing = resolvePairing,
         _createSession = createSession,
         _sessionFactory = sessionFactory,
         _inputSink = inputSink,
+        _controlSink = controlSink,
         _endSession = endSession;
 
   /// The desktop device being controlled.
@@ -66,6 +69,7 @@ class ViewerController extends ChangeNotifier {
   final Future<SessionCreated> Function(String pairingId) _createSession;
   final WebRtcSession Function(SessionCreated created) _sessionFactory;
   final SwitchableInputSink _inputSink;
+  final SwitchableControlSink? _controlSink;
   final Future<void> Function(String sessionId)? _endSession;
 
   /// Current UI phase.
@@ -101,9 +105,11 @@ class ViewerController extends ChangeNotifier {
       _set(phase: ViewerPhase.connecting);
       await session.start();
 
-      // The input data channel exists after start(); route input to it.
+      // The data channels exist after start(); route input + control to them.
       final sink = session.inputSink;
       if (sink != null) _inputSink.attach(sink);
+      final control = session.controlSink;
+      if (control != null) _controlSink?.attach(control);
     } catch (e) {
       _fail('$e');
     }
@@ -130,6 +136,7 @@ class ViewerController extends ChangeNotifier {
   /// backend (best-effort).
   Future<void> disconnect() async {
     _inputSink.detach();
+    _controlSink?.detach();
     final session = _session;
     _session = null;
     session?.phase.removeListener(_onSessionPhase);
@@ -173,6 +180,7 @@ final viewerControllerFactoryProvider =
   final sessionApi = ref.watch(sessionApiProvider);
   final sessionFactory = ref.watch(webRtcSessionFactoryProvider);
   final inputSink = ref.watch(switchableInputSinkProvider);
+  final controlSink = ref.watch(switchableControlSinkProvider);
 
   return (deviceId) => ViewerController(
         deviceId: deviceId,
@@ -180,6 +188,7 @@ final viewerControllerFactoryProvider =
         createSession: sessionApi.create,
         sessionFactory: sessionFactory,
         inputSink: inputSink,
+        controlSink: controlSink,
         endSession: (id) => sessionApi.end(id),
       );
 });

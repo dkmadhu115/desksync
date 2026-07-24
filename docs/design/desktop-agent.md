@@ -15,7 +15,8 @@ and the runtime stays testable.
 | `desksync-input` | `InputInjector` trait + event model, pure coordinate/keycode `mapping`, `Clipboard` abstraction, the `InputRouter` (decodes data-channel control frames → inject/clipboard), and the native `EnigoInjector`/`ArboardClipboard` |
 | `desksync-transport` | Signaling envelope + `SignalingTransport` trait & `ReplayGuard`; the `WebSocketSignaling` client (tokio-tungstenite + rustls), the pure `NegotiationState` machine (offer/answer/ICE), and the `AdaptiveBitrateController` (loss-based AIMD). The `webrtc` media peer (encoder → RTP) is wired behind `native` alongside capture in Phase 7 |
 | `desksync-backend` | REST client for enrollment: auth (`login`/`refresh`), device registration, pairing initiation, and heartbeats (`BackendApi` trait + reqwest/rustls `BackendClient`); the `Enrollment` orchestrator; and terminal QR rendering (`render_qr`). Pure Rust, unit-tested against an in-process HTTP server |
-| `desksync-agent` (config-ui) | Process entrypoint: tracing, single-instance, config+identity, subsystem wiring, graceful shutdown, and the `pair` command |
+| `desksync-devtools` | Developer Quick Launch engine: closed action model, workspace/ssh-host registries, compile-time shortcut catalog, OS-aware launch resolution, the `planner` choke point, shell-free `TokioCommandRunner`, and `DevToolsService`. Allowlist-only, unit-tested (see [devtools design](devtools.md)) |
+| `desksync-agent` (config-ui) | Process entrypoint: tracing, single-instance, config+identity, subsystem wiring, the devtools engine load (fail-closed), graceful shutdown, and the `pair` command |
 
 ## Enrollment & pairing initiation (`desksync-agent pair`)
 
@@ -108,6 +109,21 @@ The router is pure Rust and fully unit-tested with the no-op injector/clipboard;
 the `native` build wires it to the real `EnigoInjector`/`ArboardClipboard`.
 Desktop→mobile clipboard mirroring and the media encoder (capture frames → RTP
 video track) are the remaining `native` media path, exercised on real devices.
+
+## Developer actions plane (`desksync-devtools`)
+
+A second, reliable/ordered **`control`** data channel carries developer
+Quick Launch actions (launch editors/terminals, open saved workspaces, run
+curated Git/Docker/kubectl/Helm shortcuts, SSH to saved hosts). The native peer
+dispatches each control frame to `DevToolsService::handle_frame`, mirroring
+`InputRouter`.
+
+The engine is an **allowlist**, never remote command execution: a closed action
+model with id-only references, registries populated out-of-band (fail-closed on
+bad config), a compile-time shortcut catalog, and shell-free process spawning.
+The agent loads `workspaces.json`/`ssh_hosts.json` from its config dir at
+startup. See the [developer features design](devtools.md) and
+[ADR 0008](../adr/0008-devtools-allowlist.md).
 
 ## Security-relevant state
 

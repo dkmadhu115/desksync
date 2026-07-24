@@ -23,6 +23,7 @@ use desksync_capture::{CaptureLoop, CaptureSettings, ScreenCapturer};
 use desksync_core::identity::DeviceIdentity;
 use desksync_core::subsystem::Subsystem;
 use desksync_core::{Agent, AgentConfig, AgentStore, Autostart, SingleInstance};
+use desksync_devtools::{DevToolsService, SshHost, SshHostRegistry, TokioCommandRunner, Workspace, WorkspaceRegistry};
 use desksync_input::InputInjector;
 
 fn init_tracing() {
@@ -110,6 +111,51 @@ async fn run_pairing(store: &AgentStore, config: &AgentConfig, identity: &Device
     Ok(())
 }
 
+/// Load a JSON array of registry items from `<config-dir>/<file>`, returning an
+/// empty list when the file is absent and logging (but tolerating) parse errors.
+fn load_workspaces(store: &AgentStore) -> Vec<Workspace> {
+    let path = store.dir().join("workspaces.json");
+    match std::fs::read_to_string(&path) {
+        Ok(s) => serde_json::from_str::<Vec<Workspace>>(&s).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "ignoring invalid workspaces.json");
+            Vec::new()
+        }),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn load_ssh_hosts(store: &AgentStore) -> Vec<SshHost> {
+    let path = store.dir().join("ssh_hosts.json");
+    match std::fs::read_to_string(&path) {
+        Ok(s) => serde_json::from_str::<Vec<SshHost>>(&s).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "ignoring invalid ssh_hosts.json");
+            Vec::new()
+        }),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Build the developer-tools service from persisted registries. Invalid entries
+/// fail closed to an empty registry so a bad config never widens the allowlist.
+/// The native WebRTC control channel dispatches `dev_action` frames to
+/// `DevToolsService::handle_frame` (wired with the media peer).
+fn build_devtools(store: &AgentStore) -> DevToolsService {
+    let workspaces = WorkspaceRegistry::from_items(load_workspaces(store)).unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "rejecting workspaces registry; starting empty");
+        WorkspaceRegistry::new()
+    });
+    let hosts = SshHostRegistry::from_items(load_ssh_hosts(store)).unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "rejecting ssh hosts registry; starting empty");
+        SshHostRegistry::new()
+    });
+    DevToolsService::new(
+        workspaces,
+        hosts,
+        Arc::new(TokioCommandRunner::default()),
+        std::env::consts::OS,
+    )
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     init_tracing();
@@ -174,6 +220,17 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     let subsystems: Vec<Arc<dyn Subsystem>> = vec![capturer, Arc::clone(&capture_loop) as Arc<dyn Subsystem>, injector];
+
+    // Developer quick-launch/shortcut engine. Loaded and validated at startup
+    // (fail-closed on bad config) so it is ready for the control channel that
+    // the native WebRTC peer wires to `DevToolsService::handle_frame`.
+    let devtools = build_devtools(&store);
+    tracing::info!(
+        workspaces = devtools.workspaces().list().len(),
+        ssh_hosts = devtools.hosts().list().len(),
+        "developer tools engine ready"
+    );
+    let _devtools = devtools;
 
     let agent = Agent::new(config, subsystems);
     agent.start().await.context("failed to start agent")?;
