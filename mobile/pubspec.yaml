@@ -43,6 +43,7 @@ dependencies:
   flutter_secure_storage: ^10.3.1
   hive: ^2.2.3
   hive_flutter: ^1.1.0
+  mobile_scanner: ^7.4.0
 
 dev_dependencies:
   flutter_test:

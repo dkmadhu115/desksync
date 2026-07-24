@@ -12,6 +12,19 @@ class DeviceApi {
 
   final Dio _dio;
 
+  /// POST /api/v1/devices — register (or idempotently re-register) a device.
+  Future<Device> register(DeviceRegistration registration) async {
+    try {
+      final resp = await _dio.post<Map<String, dynamic>>(
+        '/api/v1/devices',
+        data: registration.toJson(),
+      );
+      return Device.fromJson(resp.data!);
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
+
   /// GET /api/v1/devices
   Future<List<Device>> list() async {
     try {

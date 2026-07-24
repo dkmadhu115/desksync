@@ -19,6 +19,43 @@ enum DeviceStatus {
   offline,
 }
 
+/// Payload for registering (or re-registering) a device, mirroring the
+/// `DeviceRegistration` schema in the OpenAPI contract.
+class DeviceRegistration {
+  /// Creates a registration payload.
+  const DeviceRegistration({
+    required this.kind,
+    required this.platform,
+    required this.name,
+    required this.publicKey,
+    this.fcmToken,
+  });
+
+  /// Whether this is a desktop or mobile device.
+  final DeviceKind kind;
+
+  /// OS platform string (windows/macos/linux/android/ios).
+  final String platform;
+
+  /// Human-friendly device name.
+  final String name;
+
+  /// Base64-encoded 32-byte public key.
+  final String publicKey;
+
+  /// Optional mobile push token.
+  final String? fcmToken;
+
+  /// Serialize to the backend request body.
+  Map<String, dynamic> toJson() => {
+        'kind': kind == DeviceKind.desktop ? 'desktop' : 'mobile',
+        'platform': platform,
+        'name': name,
+        'public_key': publicKey,
+        if (fcmToken != null) 'fcm_token': fcmToken,
+      };
+}
+
 /// A device belonging to the signed-in user, mirroring the `Device` schema in
 /// the OpenAPI contract.
 class Device {

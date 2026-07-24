@@ -6,9 +6,11 @@ import 'package:go_router/go_router.dart';
 import '../../../app/router.dart';
 import '../../devices/application/devices_controller.dart';
 import '../application/pairing_controller.dart';
+import '../domain/pairing_link.dart';
+import 'qr_scan_screen.dart';
 
-/// Device pairing screen. Offers QR scanning (wired in Phase 6) and manual-code
-/// confirmation (functional now, following the backend pairing contract).
+/// Device pairing screen. Offers QR scanning and manual-code confirmation, both
+/// following the backend pairing contract.
 class PairingScreen extends ConsumerStatefulWidget {
   /// Creates the pairing screen.
   const PairingScreen({super.key});
@@ -56,14 +58,8 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
               title: const Text('Scan QR code'),
               subtitle:
                   const Text('Point your camera at the code on your laptop'),
-              trailing: const Chip(label: Text('Soon')),
-              onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('QR scanning arrives in the next phase.'),
-                  ),
-                );
-              },
+              trailing: const Icon(Icons.chevron_right),
+              onTap: state.isSubmitting ? null : _onScan,
             ),
           ),
           const SizedBox(height: 24),
@@ -149,6 +145,20 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
     ref.read(pairingControllerProvider.notifier).confirm(
           pairingId: _pairingIdController.text,
           code: _codeController.text,
+        );
+  }
+
+  Future<void> _onScan() async {
+    final link = await Navigator.of(context).push<PairingLink>(
+      MaterialPageRoute(builder: (_) => const QrScanScreen()),
+    );
+    if (link == null || !mounted) return;
+    // Reflect the scanned values in the form, then confirm immediately.
+    _pairingIdController.text = link.pairingId;
+    _codeController.text = link.code;
+    ref.read(pairingControllerProvider.notifier).confirm(
+          pairingId: link.pairingId,
+          code: link.code,
         );
   }
 }

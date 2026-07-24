@@ -13,6 +13,8 @@ Design artifacts for the DeskSync remote-desktop system. See the root
   protocol; contract in [`backend/api/openapi.yaml`](../backend/api/openapi.yaml).
 - [Signaling & session plane](design/signaling.md) — session lifecycle,
   signaling tickets, ICE/TURN credentials, and the WebSocket relay hub.
+- [Device pairing & trust](design/pairing.md) — device registration/presence,
+  QR/manual-code challenges, the trust handshake, and persistent pairings.
 - [Security design](design/security.md) — auth, E2E crypto, pinning, replay
   protection, revocation, rate limiting.
 - [Threat model](design/threat-model.md) — STRIDE per trust boundary.
@@ -29,6 +31,7 @@ Design artifacts for the DeskSync remote-desktop system. See the root
 - [ADR 0004 — WebRTC with E2E encryption and TURN fallback](adr/0004-webrtc-with-e2e-encryption.md)
 - [ADR 0005 — Desktop agent native backends behind a feature](adr/0005-desktop-agent-native-backends.md)
 - [ADR 0006 — Stateless, ticket-authorized signaling](adr/0006-stateless-signaling-tickets.md)
+- [ADR 0007 — Ephemeral, hashed pairing challenges in Redis](adr/0007-ephemeral-pairing-challenges.md)
 
 ## Phase status
 

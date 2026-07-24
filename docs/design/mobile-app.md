@@ -2,11 +2,11 @@
 
 The mobile client lets a developer control their laptop. It is a Flutter app
 using Riverpod for state, GoRouter for navigation, and Dio for HTTP. Phase 4
-delivers authentication, the device list, pairing (manual-code), and the remote
-viewer with full touch/keyboard controls. Phase 5 adds the WebRTC connection
-plane (below); QR scanning and the trust handshake land in Phase 6, and wiring
-the live video (`RTCVideoView`) and data-channel input sink into the viewer UI
-lands in Phase 7.
+delivers authentication, the device list, pairing, and the remote viewer with
+full touch/keyboard controls. Phase 5 adds the WebRTC connection plane (below).
+Phase 6 adds device self-registration and QR-code pairing (the trust handshake);
+wiring the live video (`RTCVideoView`) and data-channel input sink into the
+viewer UI lands in Phase 7.
 
 ## WebRTC connection plane (Phase 5)
 
@@ -70,9 +70,15 @@ exercise the real controllers and repositories.
 - The device list is an `AsyncNotifier` with loading/error/data states,
   pull-to-refresh, and optimistic revoke (rolls back on failure). Only online
   desktops are tappable (they open the viewer).
-- Pairing implements manual-code confirmation against the backend contract
-  (`pairing_id` + 8-digit `code` + a persistent local `mobile_device_id`). QR
-  scanning is a visible entry point wired in Phase 6.
+- Pairing supports both **QR scanning** (`mobile_scanner`) and manual-code entry
+  against the backend contract. The scanner parses the `desksync://pair?...` deep
+  link (`PairingLink`, a pure/tested parser) into `pairing_id` + `code` and
+  confirms immediately.
+- `DeviceIdentity` registers this phone as a `mobile` device on first pairing
+  (generating and persisting a device key), then caches the server-assigned id.
+  That id is the `mobile_device_id` sent on confirm, so the pairing satisfies the
+  backend's device foreign keys. The uploaded public key is a placeholder until
+  the real X25519 identity lands with E2E encryption (Phase 9).
 
 ## Touch controls (the input pipeline)
 

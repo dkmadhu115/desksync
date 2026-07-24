@@ -7,6 +7,7 @@ abstract final class StorageKeys {
   static const refreshToken = 'refresh_token';
   static const devicePrivateKey = 'device_private_key';
   static const mobileDeviceId = 'mobile_device_id';
+  static const mobileDevicePublicKey = 'mobile_device_public_key';
 }
 
 /// Abstraction over encrypted key/value storage for the small set of secrets

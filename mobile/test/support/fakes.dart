@@ -93,6 +93,29 @@ class FakeDeviceApi extends DeviceApi {
   ApiException? error;
   final List<String> deleted = [];
 
+  /// Registrations received, and how many times [register] was called.
+  final List<DeviceRegistration> registrations = [];
+  int registerCalls = 0;
+
+  /// Id assigned to the next registered device.
+  String nextRegisteredId = 'mobile-dev-1';
+
+  @override
+  Future<Device> register(DeviceRegistration registration) async {
+    if (error != null) throw error!;
+    registerCalls++;
+    registrations.add(registration);
+    final device = Device(
+      id: nextRegisteredId,
+      kind: registration.kind,
+      platform: registration.platform,
+      name: registration.name,
+      status: DeviceStatus.offline,
+    );
+    devices = [...devices, device];
+    return device;
+  }
+
   @override
   Future<List<Device>> list() async {
     if (error != null) throw error!;
