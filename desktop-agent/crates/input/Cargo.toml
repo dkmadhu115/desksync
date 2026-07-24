@@ -9,6 +9,7 @@ description = "Keyboard/mouse/touch input injection abstraction for the DeskSync
 [dependencies]
 desksync-core.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 async-trait.workspace = true
 tracing.workspace = true
 tokio = { workspace = true }

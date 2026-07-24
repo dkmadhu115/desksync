@@ -12,7 +12,7 @@ and the runtime stays testable.
 |-------|----------------|
 | `desksync-core` | Runtime (`Agent`), `Subsystem` trait + health model, config, unified error, **device identity (X25519)**, **on-disk persistence**, **single-instance lock**, **autostart** |
 | `desksync-capture` | `ScreenCapturer` trait, `Frame`/`Monitor` model, pure frame-scaling utils, the `CaptureLoop` service, and the native `XcapCapturer` |
-| `desksync-input` | `InputInjector` trait + event model, pure coordinate/keycode `mapping`, `Clipboard` abstraction, and the native `EnigoInjector` |
+| `desksync-input` | `InputInjector` trait + event model, pure coordinate/keycode `mapping`, `Clipboard` abstraction, the `InputRouter` (decodes data-channel control frames → inject/clipboard), and the native `EnigoInjector`/`ArboardClipboard` |
 | `desksync-transport` | Signaling envelope + `SignalingTransport` trait & `ReplayGuard`; the `WebSocketSignaling` client (tokio-tungstenite + rustls), the pure `NegotiationState` machine (offer/answer/ICE), and the `AdaptiveBitrateController` (loss-based AIMD). The `webrtc` media peer (encoder → RTP) is wired behind `native` alongside capture in Phase 7 |
 | `desksync-backend` | REST client for enrollment: auth (`login`/`refresh`), device registration, pairing initiation, and heartbeats (`BackendApi` trait + reqwest/rustls `BackendClient`); the `Enrollment` orchestrator; and terminal QR rendering (`render_qr`). Pure Rust, unit-tested against an in-process HTTP server |
 | `desksync-agent` (config-ui) | Process entrypoint: tracing, single-instance, config+identity, subsystem wiring, graceful shutdown, and the `pair` command |
@@ -91,6 +91,23 @@ Events from the mobile client are resolution-independent: pointer coordinates in
 backend-neutral `PhysicalKey`; the native backend only translates `PhysicalKey`
 into its own enum. This keeps the arithmetic and key table fully unit-tested
 without any OS.
+
+## Input & clipboard receive plane (`InputRouter`)
+
+The controller sends input as one JSON `InputEvent` per WebRTC data-channel text
+frame (wire contract shared with the mobile client). `InputRouter` sits on the
+data channel's `on_message` callback and, per frame:
+
+- decodes the frame into an `InputEvent`; **malformed frames are counted and
+  dropped**, never fatal, so a buggy or hostile peer cannot crash the agent;
+- dispatches pointer/key events to the `InputInjector`;
+- for `clipboard_text`, writes the OS `Clipboard` (so a desktop paste reflects
+  what was copied on the phone) in addition to injecting.
+
+The router is pure Rust and fully unit-tested with the no-op injector/clipboard;
+the `native` build wires it to the real `EnigoInjector`/`ArboardClipboard`.
+Desktop→mobile clipboard mirroring and the media encoder (capture frames → RTP
+video track) are the remaining `native` media path, exercised on real devices.
 
 ## Security-relevant state
 

@@ -25,6 +25,20 @@ class PairingApi {
     }
   }
 
+  /// GET /api/v1/pairings — list the caller's persistent pairings.
+  Future<List<Pairing>> list() async {
+    try {
+      final resp = await _dio.get<List<dynamic>>('/api/v1/pairings');
+      final data = resp.data ?? const [];
+      return data
+          .whereType<Map<String, dynamic>>()
+          .map(Pairing.fromJson)
+          .toList();
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
+
   /// POST /api/v1/pairing/confirm
   Future<Pairing> confirm({
     required String pairingId,

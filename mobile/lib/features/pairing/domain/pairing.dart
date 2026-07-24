@@ -109,3 +109,28 @@ DateTime? _parseDate(dynamic value) {
   if (value is String && value.isNotEmpty) return DateTime.tryParse(value);
   return null;
 }
+
+/// Select the active pairing for [desktopDeviceId] from [pairings], or null.
+///
+/// A remote-control session can only be created over an `active` pairing; this
+/// filters out pending/revoked ones. If several match (e.g. re-paired), the
+/// most recently created is preferred.
+Pairing? selectActivePairing(
+  Iterable<Pairing> pairings,
+  String desktopDeviceId,
+) {
+  final matches = pairings
+      .where((p) =>
+          p.desktopDeviceId == desktopDeviceId &&
+          p.status == PairingStatus.active)
+      .toList()
+    ..sort((a, b) {
+      final at = a.createdAt;
+      final bt = b.createdAt;
+      if (at == null && bt == null) return 0;
+      if (at == null) return 1;
+      if (bt == null) return -1;
+      return bt.compareTo(at);
+    });
+  return matches.isEmpty ? null : matches.first;
+}

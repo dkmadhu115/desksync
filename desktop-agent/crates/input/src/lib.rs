@@ -18,11 +18,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 pub mod clipboard;
 pub mod mapping;
+pub mod router;
 
 #[cfg(feature = "native")]
 pub mod native;
 
 pub use clipboard::{Clipboard, NoopClipboard};
+pub use router::{FrameOutcome, InputRouter};
 
 #[cfg(feature = "native")]
 pub use native::EnigoInjector;

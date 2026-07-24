@@ -4,9 +4,11 @@ The mobile client lets a developer control their laptop. It is a Flutter app
 using Riverpod for state, GoRouter for navigation, and Dio for HTTP. Phase 4
 delivers authentication, the device list, pairing, and the remote viewer with
 full touch/keyboard controls. Phase 5 adds the WebRTC connection plane (below).
-Phase 6 adds device self-registration and QR-code pairing (the trust handshake);
-wiring the live video (`RTCVideoView`) and data-channel input sink into the
-viewer UI lands in Phase 7.
+Phase 6 adds device self-registration and QR-code pairing (the trust handshake).
+Phase 7 wires the live remote desktop into the viewer: it resolves the device's
+active pairing, creates a session, drives the `WebRtcSession`, renders the live
+video (`RTCVideoView`), and routes touch/keyboard/clipboard input to the desktop
+over the data channel.
 
 ## WebRTC connection plane (Phase 5)
 
@@ -94,12 +96,34 @@ locked by unit tests (`test/input_event_test.dart`).
   matching the agent's decode table.
 - `application/input_controller.dart` — a `Notifier` that dispatches events to
   the `InputSink` and counts them.
-- `application/input_sink.dart` — `InputSink` interface. Today a
-  `LoggingInputSink`; in Phase 5 the WebRTC data-channel sink replaces the
-  provider override with no other code change.
+- `application/input_sink.dart` — the `InputSink` interface plus a
+  `SwitchableInputSink`: the pipeline always dispatches through one stable sink
+  whose destination is swapped at runtime. The viewer **attaches** the live
+  data-channel sink on connect and **detaches** on teardown; until then events
+  fall back to logging and are counted as dropped. This decouples
+  `InputController`/widgets from the WebRTC lifecycle (unit-tested).
 - The viewer offers pointer vs scroll gesture modes, left/right-click taps,
-  long-press right-click, and a keyboard capture bar (diffing typed text into
-  key events, plus Enter/Backspace).
+  long-press right-click, a keyboard capture bar (diffing typed text into key
+  events, plus Enter/Backspace), and a **send-clipboard** action that pushes the
+  phone's clipboard to the desktop as a `clipboard_text` event.
+
+## Viewer connection lifecycle (Phase 7)
+
+`viewer/application/viewer_controller.dart` (`ViewerController`, a
+`ChangeNotifier`) orchestrates one connection for a device:
+
+1. **resolve** the device's active pairing — `PairingApi.list()` +
+   `selectActivePairing` (pure, unit-tested; prefers the newest `active`
+   pairing). No pairing → a "pair this device" prompt.
+2. **create** a session for that pairing (`SessionApi.create`).
+3. **connect** — build the `WebRtcSession`, `start()` it, then attach its
+   data-channel sink to the shared `SwitchableInputSink`.
+
+The UI renders per phase (`resolving`/`connecting`/`connected`/`noPairing`/
+`failed`/`closed`): a status overlay with retry while establishing, and the live
+`RTCVideoView` once connected. Pairing resolution, session creation, and the
+failure/no-pairing branches are unit-tested via injected callbacks; the
+`flutter_webrtc` peer is exercised on real devices.
 
 ## Testing
 

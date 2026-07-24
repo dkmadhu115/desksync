@@ -18,6 +18,14 @@ class PairingRepository {
   Future<PairingChallenge> initiate(String desktopDeviceId) =>
       _api.initiate(desktopDeviceId);
 
+  /// Resolve the active, usable pairing this phone has with [desktopDeviceId],
+  /// or null if none exists. A session can only be started over an active
+  /// pairing, so the viewer uses this to find the pairing id to connect with.
+  Future<Pairing?> activePairingForDevice(String desktopDeviceId) async {
+    final pairings = await _api.list();
+    return selectActivePairing(pairings, desktopDeviceId);
+  }
+
   /// Confirm a pairing using the desktop-provided code, attaching this device's
   /// registered id as the mobile side of the pairing.
   Future<Pairing> confirm({
