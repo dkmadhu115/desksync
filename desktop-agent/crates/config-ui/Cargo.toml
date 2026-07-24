@@ -15,6 +15,7 @@ desksync-core.workspace = true
 desksync-capture.workspace = true
 desksync-input.workspace = true
 desksync-transport.workspace = true
+desksync-backend.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

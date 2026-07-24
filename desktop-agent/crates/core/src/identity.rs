@@ -11,6 +11,7 @@
 //! is unit-tested on every target, including headless CI.
 
 use crate::error::{AgentError, Result};
+use base64::Engine;
 use x25519_dalek::{PublicKey, StaticSecret};
 
 /// Length of an X25519 key (public or private) in bytes.
@@ -70,6 +71,12 @@ impl DeviceIdentity {
     /// Hex-encoded public key, safe to share.
     pub fn public_hex(&self) -> String {
         hex::encode(self.public_bytes())
+    }
+
+    /// Standard-base64-encoded public key. This is the encoding the backend's
+    /// device registration expects for `public_key`.
+    pub fn public_base64(&self) -> String {
+        base64::engine::general_purpose::STANDARD.encode(self.public_bytes())
     }
 
     /// A short, stable fingerprint of the public key for logs and QR pairing
@@ -133,5 +140,15 @@ mod tests {
         let id = DeviceIdentity::generate().unwrap();
         assert_eq!(id.fingerprint(), id.fingerprint());
         assert_eq!(id.fingerprint().len(), 16); // 8 bytes hex
+    }
+
+    #[test]
+    fn public_base64_decodes_to_32_bytes() {
+        let id = DeviceIdentity::generate().unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(id.public_base64())
+            .unwrap();
+        assert_eq!(decoded.len(), KEY_LEN);
+        assert_eq!(decoded.as_slice(), id.public_bytes());
     }
 }

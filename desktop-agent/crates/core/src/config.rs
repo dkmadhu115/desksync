@@ -23,6 +23,10 @@ pub struct AgentConfig {
     pub device_id: String,
     /// Secure WebSocket URL of the signaling backend.
     pub backend_url: String,
+    /// Base URL of the backend REST API gateway (used for enrollment, device
+    /// registration, pairing, and heartbeats), e.g. `https://api.desksync.dev`.
+    #[serde(default = "default_api_url")]
+    pub api_url: String,
     /// Preferred video codec.
     #[serde(default)]
     pub codec: Codec,
@@ -40,6 +44,9 @@ pub struct AgentConfig {
     pub heartbeat_secs: u64,
 }
 
+fn default_api_url() -> String {
+    "http://localhost:8080".into()
+}
 fn default_fps() -> u32 {
     30
 }
@@ -55,6 +62,7 @@ impl Default for AgentConfig {
         Self {
             device_id: String::new(),
             backend_url: String::new(),
+            api_url: default_api_url(),
             codec: Codec::default(),
             target_fps: default_fps(),
             max_height: default_max_height(),

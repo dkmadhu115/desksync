@@ -11,6 +11,7 @@ members = [
     "crates/capture",
     "crates/input",
     "crates/transport",
+    "crates/backend",
     "crates/config-ui",
 ]
 
@@ -42,8 +43,14 @@ futures-util = { version = "0.3", default-features = false, features = ["std", "
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 getrandom = "0.2"
 hex = "0.4"
+base64 = "0.22"
 fs4 = { version = "0.13", features = ["sync"] }
 dirs = "6"
+# REST client for backend enrollment (auth, device registration, pairing
+# initiation). rustls keeps it pure Rust so it builds on headless CI.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Renders the pairing QR payload as a terminal-scannable Unicode QR code.
+qrcode = "0.14"
 
 # Native platform backends. These pull in system libraries and/or need a real
 # display + OS permissions, so they are OPTIONAL and enabled only via each
@@ -59,6 +66,7 @@ desksync-core = { path = "crates/core" }
 desksync-capture = { path = "crates/capture" }
 desksync-input = { path = "crates/input" }
 desksync-transport = { path = "crates/transport" }
+desksync-backend = { path = "crates/backend" }
 
 [profile.release]
 opt-level = 3

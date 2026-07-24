@@ -14,7 +14,28 @@ and the runtime stays testable.
 | `desksync-capture` | `ScreenCapturer` trait, `Frame`/`Monitor` model, pure frame-scaling utils, the `CaptureLoop` service, and the native `XcapCapturer` |
 | `desksync-input` | `InputInjector` trait + event model, pure coordinate/keycode `mapping`, `Clipboard` abstraction, and the native `EnigoInjector` |
 | `desksync-transport` | Signaling envelope + `SignalingTransport` trait & `ReplayGuard`; the `WebSocketSignaling` client (tokio-tungstenite + rustls), the pure `NegotiationState` machine (offer/answer/ICE), and the `AdaptiveBitrateController` (loss-based AIMD). The `webrtc` media peer (encoder → RTP) is wired behind `native` alongside capture in Phase 7 |
-| `desksync-agent` (config-ui) | Process entrypoint: tracing, single-instance, config+identity, subsystem wiring, graceful shutdown |
+| `desksync-backend` | REST client for enrollment: auth (`login`/`refresh`), device registration, pairing initiation, and heartbeats (`BackendApi` trait + reqwest/rustls `BackendClient`); the `Enrollment` orchestrator; and terminal QR rendering (`render_qr`). Pure Rust, unit-tested against an in-process HTTP server |
+| `desksync-agent` (config-ui) | Process entrypoint: tracing, single-instance, config+identity, subsystem wiring, graceful shutdown, and the `pair` command |
+
+## Enrollment & pairing initiation (`desksync-agent pair`)
+
+For the desktop to become pairable it must exist as a registered device and
+publish a pairing challenge. That is the `pair` command:
+
+1. Read credentials from `DESKSYNC_EMAIL` / `DESKSYNC_PASSWORD` and the REST base
+   URL from `config.api_url` (the gateway).
+2. `login` → token pair; `register_device` (kind `desktop`, detected platform,
+   host name, **base64 X25519 public key** from the device identity) → the
+   server-assigned `device_id`, persisted back into `config.json`.
+3. `initiate_pairing(device_id)` → a challenge; the agent prints a
+   terminal-scannable **QR code** of the `qr_payload` plus the manual
+   `pairing_id` + `code` fallback.
+
+The command runs **without** the single-instance lock, so it can be used while
+the daemon is running. Registration is idempotent (keyed by public key), so
+re-running `pair` reuses the same device. Backend authorization is unchanged: the
+device/pairing services validate ownership on every call and the mobile confirms
+the challenge (see [pairing.md](pairing.md)).
 
 ## Subsystem model
 

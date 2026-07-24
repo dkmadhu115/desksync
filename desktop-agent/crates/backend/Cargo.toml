@@ -1,0 +1,22 @@
+[package]
+name = "desksync-backend"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "REST client for the DeskSync backend: agent authentication, device registration, and pairing initiation, plus terminal QR rendering."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+qrcode = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# The client tests spin up a tiny in-process HTTP server over a TcpListener, so
+# the pure REST logic is exercised end-to-end without external services.
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "time", "io-util", "sync"] }

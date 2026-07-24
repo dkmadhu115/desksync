@@ -46,6 +46,10 @@ Pairing is a two-step, cross-device handshake:
    - an 8-digit numeric `manual_code`,
    - a `qr_payload` deep link: `desksync://pair?v=1&pid=<pairing_id>&code=<code>`.
 
+   The desktop agent drives this via `desksync-agent pair`, which logs in,
+   registers itself, calls initiate, and renders the QR + manual code in the
+   terminal (see [desktop-agent.md](desktop-agent.md)).
+
    Only the **hash** of the code is stored (`crypto.HashToken`, SHA-256), in
    **Redis** with a short TTL (default 5 minutes). Nothing is written to
    PostgreSQL yet — a pending challenge is ephemeral and single-use.

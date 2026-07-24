@@ -16,7 +16,11 @@
 use std::sync::Arc;
 
 use anyhow::{bail, Context};
+use desksync_backend::{
+    detect_device_name, detect_platform, render_qr, BackendClient, Credentials, DeviceProfile, Enrollment,
+};
 use desksync_capture::{CaptureLoop, CaptureSettings, ScreenCapturer};
+use desksync_core::identity::DeviceIdentity;
 use desksync_core::subsystem::Subsystem;
 use desksync_core::{Agent, AgentConfig, AgentStore, Autostart, SingleInstance};
 use desksync_input::InputInjector;
@@ -70,20 +74,49 @@ fn make_injector() -> Arc<dyn InputInjector> {
 
 const BACKEND_KIND: &str = if cfg!(feature = "native") { "native" } else { "noop" };
 
+/// Enroll this desktop and initiate a pairing, printing a scannable QR code and
+/// the manual fallback code. Runs without the single-instance lock so it can be
+/// used while the daemon is running. Credentials come from
+/// `DESKSYNC_EMAIL`/`DESKSYNC_PASSWORD`; the REST base URL from `config.api_url`.
+async fn run_pairing(store: &AgentStore, config: &AgentConfig, identity: &DeviceIdentity) -> anyhow::Result<()> {
+    let creds = Credentials::from_env()?;
+    let client = BackendClient::new(&config.api_url).context("building backend client")?;
+    let enrollment = Enrollment::new(Arc::new(client));
+
+    let profile = DeviceProfile {
+        platform: detect_platform(),
+        name: detect_device_name(),
+        public_key: identity.public_base64(),
+    };
+
+    let outcome = enrollment.run(&creds, profile).await.context("enrollment failed")?;
+
+    // Persist the server-assigned device id so subsequent runs reuse it.
+    let mut updated = config.clone();
+    updated.device_id = outcome.device_id.clone();
+    if let Err(e) = store.save_config(&updated) {
+        tracing::warn!(error = %e, "failed to persist device id after pairing");
+    }
+
+    let qr = render_qr(&outcome.challenge.qr_payload).context("rendering pairing QR")?;
+    println!("\nScan this QR code with the DeskSync mobile app:\n\n{qr}");
+    println!("Or enter the pairing details manually:");
+    println!("  Pairing ID: {}", outcome.challenge.pairing_id);
+    println!("  Code:       {}", outcome.challenge.manual_code);
+    if !outcome.challenge.expires_at.is_empty() {
+        println!("  Expires at: {}", outcome.challenge.expires_at);
+    }
+    println!("\nRegistered device id: {}\n", outcome.device_id);
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     init_tracing();
 
     let store = AgentStore::platform_default().context("resolving config directory")?;
 
-    // 1) Single-instance guard. Held for the life of the process.
-    let _instance =
-        match SingleInstance::acquire(store.dir().join("agent.lock")).context("acquiring single-instance lock")? {
-            Some(guard) => guard,
-            None => bail!("another DeskSync agent instance is already running"),
-        };
-
-    // 2) Configuration + device identity.
+    // Configuration + device identity are needed for every mode.
     let config = load_config(&store);
     config
         .validate()
@@ -91,6 +124,20 @@ async fn main() -> anyhow::Result<()> {
         .context("invalid agent configuration")?;
 
     let identity = store.load_or_create_identity().context("loading device identity")?;
+
+    // `desksync-agent pair` runs the enrollment + pairing-initiation flow and
+    // exits. It does not take the single-instance lock so it can be run while
+    // the daemon is active.
+    if std::env::args().nth(1).as_deref() == Some("pair") {
+        return run_pairing(&store, &config, &identity).await;
+    }
+
+    // Single-instance guard for the daemon. Held for the life of the process.
+    let _instance =
+        match SingleInstance::acquire(store.dir().join("agent.lock")).context("acquiring single-instance lock")? {
+            Some(guard) => guard,
+            None => bail!("another DeskSync agent instance is already running"),
+        };
 
     // Reconcile launch-at-login with the configured preference (best-effort).
     if let Ok(autostart) = Autostart::for_current_exe() {
