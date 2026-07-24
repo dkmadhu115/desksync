@@ -36,7 +36,7 @@ jobs:
         run: make test
 
   backend-integration:
-    name: Backend integration (auth + session)
+    name: Backend integration (auth + device + pairing + session)
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -66,6 +66,10 @@ jobs:
           go-version: "1.25"
       - name: Auth integration tests
         run: cd backend/services/auth && GOWORK=off go test ./internal/service/... -run Integration -v
+      - name: Device integration tests
+        run: cd backend/services/device && GOWORK=off go test ./internal/service/... -run Integration -v
+      - name: Pairing integration tests
+        run: cd backend/services/pairing && GOWORK=off go test ./internal/service/... -run Integration -v
       - name: Session integration tests
         run: cd backend/services/session && GOWORK=off go test ./internal/service/... -run Integration -v
 

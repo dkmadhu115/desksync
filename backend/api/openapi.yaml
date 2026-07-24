@@ -190,6 +190,29 @@ paths:
         '204': { description: Device revoked }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/v1/devices/{deviceId}/heartbeat:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    post:
+      tags: [devices]
+      operationId: deviceHeartbeat
+      summary: Report device presence and refresh its last-seen timestamp
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string, enum: [online, offline] }
+      responses:
+        '200':
+          description: Updated device
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Device' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/v1/pairing/initiate:
     post:
       tags: [pairing]
@@ -236,6 +259,32 @@ paths:
               schema: { $ref: '#/components/schemas/Pairing' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/pairings:
+    get:
+      tags: [pairing]
+      operationId: listPairings
+      summary: List the caller's persistent pairings
+      responses:
+        '200':
+          description: Pairings
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Pairing' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/pairings/{pairingId}:
+    parameters:
+      - $ref: '#/components/parameters/PairingId'
+    delete:
+      tags: [pairing]
+      operationId: revokePairing
+      summary: Revoke a persistent pairing
+      responses:
+        '204': { description: Pairing revoked }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /api/v1/sessions:
     get:
@@ -323,6 +372,11 @@ components:
       schema: { type: string, format: uuid }
     SessionId:
       name: sessionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PairingId:
+      name: pairingId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -421,6 +475,7 @@ components:
         status: { type: string, enum: [pending, active, revoked] }
         trusted: { type: boolean }
         created_at: { type: string, format: date-time }
+        confirmed_at: { type: [string, 'null'], format: date-time }
     Session:
       type: object
       properties:
