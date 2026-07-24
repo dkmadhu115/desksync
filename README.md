@@ -55,8 +55,8 @@ specification and [`docs/`](docs/) for design artifacts.
 | 5 | WebRTC (signaling plane: session tickets, ICE, WebSocket relay; clients in progress) | ✅ done |
 | 6 | Device pairing (device registration + presence, QR/manual codes, trust, persistent pairing; agent enrollment + pairing initiation) | ✅ done |
 | 7 | Remote desktop (live video rendering, keyboard, mouse, clipboard over the WebRTC data channel) | ✅ done |
-| 8 | Developer features (Quick Launch editors/terminals, saved workspaces, curated Git/Docker/kubectl/Helm/SSH shortcuts over an allowlisted control channel) | ✅ current |
-| 9 | Security hardening (certificates, replay protection, encryption) | pending |
+| 8 | Developer features (Quick Launch editors/terminals, saved workspaces, curated Git/Docker/kubectl/Helm/SSH shortcuts over an allowlisted control channel) | ✅ done |
+| 9 | Security hardening (E2E X25519→HKDF→AES-256-GCM secure channel with replay protection, Ed25519 device certificates, TLS cert pinning) | ✅ current |
 | 10 | Production deployment (Docker, K8s, Helm, CI/CD, monitoring) | pending |
 
 ## Getting started (local dev)

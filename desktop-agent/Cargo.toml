@@ -8,6 +8,7 @@
 resolver = "2"
 members = [
     "crates/core",
+    "crates/crypto",
     "crates/capture",
     "crates/input",
     "crates/transport",
@@ -45,6 +46,12 @@ x25519-dalek = { version = "2", features = ["static_secrets"] }
 getrandom = "0.2"
 hex = "0.4"
 base64 = "0.22"
+# End-to-end session encryption primitives (pure Rust, headless-CI friendly):
+# HKDF-SHA256 key derivation and AES-256-GCM AEAD, with zeroize for key hygiene.
+aes-gcm = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+zeroize = { version = "1", features = ["derive"] }
 fs4 = { version = "0.13", features = ["sync"] }
 dirs = "6"
 # REST client for backend enrollment (auth, device registration, pairing
@@ -64,6 +71,7 @@ arboard = "3"
 
 # Internal crates.
 desksync-core = { path = "crates/core" }
+desksync-crypto = { path = "crates/crypto" }
 desksync-capture = { path = "crates/capture" }
 desksync-input = { path = "crates/input" }
 desksync-transport = { path = "crates/transport" }

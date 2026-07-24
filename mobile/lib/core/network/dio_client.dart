@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../config/env.dart';
 import '../storage/secure_storage.dart';
 import 'auth_interceptor.dart';
+import 'certificate_pinning.dart';
 
 /// Signals that the current session has expired and the user must sign in
 /// again. The auth controller listens to this to reset its state and the
@@ -32,16 +33,18 @@ BaseOptions _baseOptions() => BaseOptions(
     );
 
 /// Builds and provides the app-wide [Dio] HTTP client, pre-configured with the
-/// gateway base URL, timeouts, and the [AuthInterceptor] that attaches the
-/// bearer token and refreshes it on expiry. Certificate pinning is added in the
-/// security-hardening phase (Phase 9).
+/// gateway base URL, timeouts, the [AuthInterceptor] that attaches the bearer
+/// token and refreshes it on expiry, and fail-closed TLS certificate pinning
+/// (configured via `DESKSYNC_CERT_PINS`).
 final dioProvider = Provider<Dio>((ref) {
   final store = ref.watch(secureStoreProvider);
 
-  final dio = Dio(_baseOptions());
+  final pinner = CertificatePinner(Env.certPinSet);
+  final dio = Dio(_baseOptions())..httpClientAdapter = pinningAdapter(pinner);
   // A separate client with no auth interceptor, used for token refresh and for
-  // replaying requests after a refresh (prevents recursive interception).
-  final refreshDio = Dio(_baseOptions());
+  // replaying requests after a refresh (prevents recursive interception). It is
+  // pinned identically.
+  final refreshDio = Dio(_baseOptions())..httpClientAdapter = pinningAdapter(pinner);
 
   dio.interceptors.add(
     AuthInterceptor(

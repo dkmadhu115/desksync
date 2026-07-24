@@ -35,7 +35,11 @@ identity but must never be able to decrypt the remote-desktop stream.
   never leaves the device** (OS Keyring on desktop; Keychain/Keystore via
   Flutter Secure Storage on mobile). Only the **public key** is registered.
 - Devices are additionally issued a **device certificate** (`device_certificates`)
-  used for mutual authentication of the agent<->backend channel.
+  used for mutual authentication of the agent<->backend channel. The backend runs
+  an **Ed25519 CA** (`backend/pkg/devicecert`) that signs a compact certificate
+  binding the device id, owner, X25519 public key, kind, and validity window;
+  peers verify the signature + window offline and revocation is enforced via
+  `device_certificates.revoked_at`. The CA private key never leaves the backend.
 - **Biometric unlock** (Face ID / fingerprint) and a **PIN fallback** gate the
   mobile app before it can start a session.
 
@@ -59,23 +63,32 @@ sequenceDiagram
     Note over SIG: sees only encrypted SDP/ICE routing, never plaintext media
 ```
 
-- **Key agreement**: ephemeral **ECDH over Curve25519 (X25519)** per session,
-  authenticated by the long-term device keys exchanged at pairing (prevents MITM
-  because the signaling server cannot substitute keys without detection).
-- **Key derivation**: **HKDF-SHA256** expands the shared secret into distinct
-  keys for each direction/purpose.
+- **Key agreement**: **ECDH over Curve25519 (X25519)**, authenticated by the
+  long-term device keys exchanged at pairing (prevents MITM because the
+  signaling server cannot substitute keys without detection).
+- **Key derivation**: **HKDF-SHA256** expands the shared secret into a distinct
+  key **per direction**; the `info` binds the `session_id` and both device
+  public keys so a substituted key fails authentication on every frame.
 - **Bulk encryption**: **AES-256-GCM** (AEAD) for the application data channel;
-  **DTLS-SRTP** secures the WebRTC media path. Nonces are unique per message;
-  GCM provides integrity + confidentiality.
+  **DTLS-SRTP** secures the WebRTC media path. Each frame carries a monotonic
+  counter → unique 96-bit nonce; GCM provides integrity + confidentiality.
 - **Perfect forward secrecy**: ephemeral session keys mean a compromise of one
   session does not expose past/future sessions.
+
+This channel is implemented identically in the agent (`desksync-crypto`) and the
+Flutter client (`features/security/secure_channel.dart`) as `SecureChannel`, and
+frozen by a shared byte-exact interop vector so the two cannot diverge. See
+[ADR 0009](../adr/0009-e2e-secure-channel.md).
 
 ## Transport security and pinning
 
 - **TLS 1.2+ (Rustls / platform TLS)** for all REST and WebSocket traffic.
-- **Certificate pinning** on mobile (Dio) and desktop (Rustls) against the
-  backend's leaf/intermediate public-key hashes, with a backup pin to allow
-  rotation. Pin failures abort the connection.
+- **Certificate pinning** on mobile (`CertificatePinner` + Dio adapter) and
+  desktop (`desksync-crypto` `CertPinner` + Rustls verifier) against the
+  backend's leaf-certificate SHA-256, configurable with a backup pin for
+  rotation. Pinning is **fail-closed** and both sides share the identical
+  base64(SHA-256(DER)) pin format (asserted by a shared test constant).
+  Pin failures abort the connection.
 - **HSTS** and secure cookie flags at the gateway.
 
 ## Replay and integrity protection
@@ -84,6 +97,9 @@ sequenceDiagram
   `nonce` and `ts_ms`. Receivers reject non-increasing nonces (`ReplayGuard`)
   and messages outside a small clock-skew window. Server-side, seen nonces are
   tracked per session in Redis with TTL.
+- **Data-channel counters**: the E2E `SecureChannel` rejects any frame whose
+  per-direction counter does not strictly increase, and only advances its
+  receive state on a successfully authenticated frame.
 - **Idempotency**: state-changing REST endpoints accept an idempotency key where
   retries are expected (e.g. session creation).
 - **AEAD tags** (GCM) detect any tampering of encrypted payloads.

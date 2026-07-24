@@ -149,6 +149,20 @@ registries and streaming command output back rides on the native peer's control
 receive path. Unit tests cover the wire serialization, the switchable control
 sink, and the controller dispatch/count.
 
+## Security hardening (Phase 9)
+
+- `features/security/secure_channel.dart` (`SecureChannel`) is the end-to-end
+  crypto layer: X25519 ECDH → HKDF-SHA256 → AES-256-GCM with per-direction keys
+  and counter-based replay protection. It is the byte-exact mirror of the
+  agent's `desksync-crypto` crate — a shared interop vector (fixed shared
+  secret/session id/public keys) asserts identical derived keys and an identical
+  sealed frame on both sides, and the Dart tests also open a Rust-produced
+  frame. See [ADR 0009](../adr/0009-e2e-secure-channel.md).
+- `core/network/certificate_pinning.dart` (`CertificatePinner`) adds fail-closed
+  TLS leaf-certificate pinning to the Dio client (configured via
+  `DESKSYNC_CERT_PINS`), using the same base64(SHA-256(DER)) pin format as the
+  agent's `CertPinner`.
+
 ## Testing
 
 `flutter analyze` is clean and `flutter test` covers: auth flows (login,

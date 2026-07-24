@@ -20,4 +20,19 @@ abstract final class Env {
     'DESKSYNC_REQUEST_TIMEOUT_MS',
     defaultValue: 15000,
   );
+
+  /// Comma-separated base64 SHA-256 leaf-certificate pins for the API gateway.
+  /// Empty (the default) disables pinning for local development; production
+  /// builds supply pins via `--dart-define`.
+  static const String certPins = String.fromEnvironment(
+    'DESKSYNC_CERT_PINS',
+    defaultValue: '',
+  );
+
+  /// Parsed, non-empty certificate pins.
+  static List<String> get certPinSet => certPins
+      .split(',')
+      .map((p) => p.trim())
+      .where((p) => p.isNotEmpty)
+      .toList(growable: false);
 }

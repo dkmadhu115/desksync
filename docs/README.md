@@ -35,6 +35,7 @@ Design artifacts for the DeskSync remote-desktop system. See the root
 - [ADR 0006 — Stateless, ticket-authorized signaling](adr/0006-stateless-signaling-tickets.md)
 - [ADR 0007 — Ephemeral, hashed pairing challenges in Redis](adr/0007-ephemeral-pairing-challenges.md)
 - [ADR 0008 — Allowlisted developer actions (no remote command execution)](adr/0008-devtools-allowlist.md)
+- [ADR 0009 — Application-layer end-to-end secure channel](adr/0009-e2e-secure-channel.md)
 
 ## Phase status
 

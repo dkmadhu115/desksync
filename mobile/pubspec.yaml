@@ -44,6 +44,11 @@ dependencies:
   hive: ^2.2.3
   hive_flutter: ^1.1.0
   mobile_scanner: ^7.4.0
+  # Pure-Dart crypto for the end-to-end secure channel (X25519, HKDF-SHA256,
+  # AES-256-GCM), wire-compatible with the Rust agent's desksync-crypto crate.
+  cryptography: ^2.7.0
+  # Synchronous SHA-256 for the TLS certificate-pinning callback.
+  crypto: ^3.0.6
 
 dev_dependencies:
   flutter_test:

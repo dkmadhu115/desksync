@@ -11,6 +11,7 @@ and the runtime stays testable.
 | Crate | Responsibility |
 |-------|----------------|
 | `desksync-core` | Runtime (`Agent`), `Subsystem` trait + health model, config, unified error, **device identity (X25519)**, **on-disk persistence**, **single-instance lock**, **autostart** |
+| `desksync-crypto` | End-to-end `SecureChannel` (X25519 ECDH → HKDF-SHA256 → AES-256-GCM, per-direction keys, counter-based replay protection) and the fail-closed TLS `CertPinner`. Pure Rust, wire-compatible with the Flutter client (shared interop vector); see [ADR 0009](../adr/0009-e2e-secure-channel.md) |
 | `desksync-capture` | `ScreenCapturer` trait, `Frame`/`Monitor` model, pure frame-scaling utils, the `CaptureLoop` service, and the native `XcapCapturer` |
 | `desksync-input` | `InputInjector` trait + event model, pure coordinate/keycode `mapping`, `Clipboard` abstraction, the `InputRouter` (decodes data-channel control frames → inject/clipboard), and the native `EnigoInjector`/`ArboardClipboard` |
 | `desksync-transport` | Signaling envelope + `SignalingTransport` trait & `ReplayGuard`; the `WebSocketSignaling` client (tokio-tungstenite + rustls), the pure `NegotiationState` machine (offer/answer/ICE), and the `AdaptiveBitrateController` (loss-based AIMD). The `webrtc` media peer (encoder → RTP) is wired behind `native` alongside capture in Phase 7 |
