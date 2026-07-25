@@ -8,7 +8,17 @@ global:
   external_labels:
     project: desksync
 
+# Alerting rules (RED-metric based). In Kubernetes these are delivered instead
+# via the chart's PrometheusRule (helm/desksync, prometheusRule.enabled=true).
+rule_files:
+  - /etc/prometheus/alerts.yml
+
 scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+
   - job_name: desksync-services
     metrics_path: /metrics
     static_configs:

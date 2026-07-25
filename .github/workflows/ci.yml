@@ -190,4 +190,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate compose file
-        run: docker compose -f docker/docker-compose.yml config -q && echo "compose OK"
+        run: |
+          docker compose -f docker/docker-compose.yml config -q && echo "compose OK"
+          docker compose -f docker/docker-compose.observability.yml config -q && echo "observability compose OK"
+
+  helm-lint:
+    name: Helm chart lint + template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+      - name: Lint
+        run: helm lint helm/desksync
+      - name: Template (all toggles)
+        run: |
+          helm template rel helm/desksync \
+            --set serviceMonitor.enabled=true \
+            --set prometheusRule.enabled=true \
+            --set networkPolicy.enabled=true >/dev/null
+          echo "helm template OK"

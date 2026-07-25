@@ -112,8 +112,71 @@ dev-infra-down: ## Stop local infrastructure
 	docker compose -f docker/docker-compose.yml down
 
 .PHONY: compose-validate
-compose-validate: ## Validate the docker-compose file
+compose-validate: ## Validate the docker-compose files
 	docker compose -f docker/docker-compose.yml config -q && echo "compose OK"
+	docker compose -f docker/docker-compose.observability.yml config -q && echo "observability compose OK"
+
+.PHONY: obs-up
+obs-up: ## Start the observability stack (Prometheus, Grafana, Loki, Promtail)
+	docker compose -f docker/docker-compose.yml -f docker/docker-compose.observability.yml up -d prometheus grafana loki promtail
+
+.PHONY: obs-down
+obs-down: ## Stop the observability stack
+	docker compose -f docker/docker-compose.observability.yml down
+
+# ---------------------------------------------------------------------------
+# Container images
+# ---------------------------------------------------------------------------
+REGISTRY   ?= ghcr.io
+IMAGE_REPO ?= dkmadhu115/desksync
+IMAGE_TAG  ?= dev
+
+.PHONY: images
+images: ## Build all service images + the migrations image locally
+	@set -e; for s in $(GO_SERVICES); do \
+	  echo ">> image $$s"; \
+	  docker build -f docker/Dockerfile.service --build-arg SERVICE=$$s \
+	    -t $(REGISTRY)/$(IMAGE_REPO)/$$s:$(IMAGE_TAG) backend; \
+	done; \
+	echo ">> image migrations"; \
+	docker build -f docker/Dockerfile.migrations -t $(REGISTRY)/$(IMAGE_REPO)/migrations:$(IMAGE_TAG) .
+
+.PHONY: image-%
+image-%: ## Build a single service image, e.g. `make image-gateway`
+	docker build -f docker/Dockerfile.service --build-arg SERVICE=$* \
+	  -t $(REGISTRY)/$(IMAGE_REPO)/$*:$(IMAGE_TAG) backend
+
+# ---------------------------------------------------------------------------
+# Kubernetes / Helm
+# ---------------------------------------------------------------------------
+HELM_CHART   := helm/desksync
+HELM_RELEASE ?= desksync
+HELM_NS      ?= desksync
+
+.PHONY: helm-lint
+helm-lint: ## Lint the Helm chart
+	helm lint $(HELM_CHART)
+
+.PHONY: helm-template
+helm-template: ## Render the chart with all optional toggles enabled
+	helm template $(HELM_RELEASE) $(HELM_CHART) \
+	  --set serviceMonitor.enabled=true \
+	  --set prometheusRule.enabled=true \
+	  --set networkPolicy.enabled=true
+
+.PHONY: helm-package
+helm-package: ## Package the chart into dist/
+	helm package $(HELM_CHART) --destination dist/
+
+.PHONY: k8s-deploy
+k8s-deploy: ## Install/upgrade the release (override IMAGE_TAG/HELM_NS as needed)
+	helm upgrade --install $(HELM_RELEASE) $(HELM_CHART) \
+	  --namespace $(HELM_NS) --create-namespace \
+	  --set global.image.tag=$(IMAGE_TAG) --wait --timeout 10m
+
+.PHONY: k8s-uninstall
+k8s-uninstall: ## Uninstall the release
+	helm uninstall $(HELM_RELEASE) --namespace $(HELM_NS)
 
 # ---------------------------------------------------------------------------
 # Migrations

@@ -1,0 +1,41 @@
+{{- if .Values.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "desksync.fullname" . }}
+  labels:
+    {{- include "desksync.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: desksync.rules
+      rules:
+        - alert: DeskSyncServiceDown
+          expr: up{namespace="{{ .Release.Namespace }}", endpoint="http"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "DeskSync service {{`{{ $labels.service }}`}} is down"
+            description: "Target {{`{{ $labels.instance }}`}} has been unreachable for 2 minutes."
+        - alert: DeskSyncHighErrorRate
+          expr: |
+            sum(rate(http_requests_total{status=~"5.."}[5m])) by (service)
+              / sum(rate(http_requests_total[5m])) by (service) > 0.05
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High 5xx error rate on {{`{{ $labels.service }}`}}"
+            description: "{{`{{ $labels.service }}`}} is serving >5% 5xx responses over 5m."
+        - alert: DeskSyncHighLatency
+          expr: |
+            histogram_quantile(0.99,
+              sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service)
+            ) > 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High p99 latency on {{`{{ $labels.service }}`}}"
+            description: "p99 request latency for {{`{{ $labels.service }}`}} exceeds 1s over 5m."
+{{- end }}

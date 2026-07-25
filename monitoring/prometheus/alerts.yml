@@ -1,0 +1,40 @@
+# DeskSync alerting rules for the local/self-managed Prometheus (docker-compose).
+# Metric names come from backend/pkg/observability: http_requests_total and
+# http_request_duration_seconds, both carrying a `service` const-label. The
+# `status` label is the numeric HTTP code as a string.
+groups:
+  - name: desksync.availability
+    rules:
+      - alert: DeskSyncTargetDown
+        expr: up{job="desksync-services"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "DeskSync target {{ $labels.instance }} is down"
+          description: "{{ $labels.instance }} has been unreachable for 2 minutes."
+
+  - name: desksync.red
+    rules:
+      - alert: DeskSyncHighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m])) by (service)
+            / sum(rate(http_requests_total[5m])) by (service) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High 5xx rate on {{ $labels.service }}"
+          description: "{{ $labels.service }} is serving >5% 5xx responses over 5m."
+
+      - alert: DeskSyncHighLatencyP99
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service)
+          ) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High p99 latency on {{ $labels.service }}"
+          description: "p99 latency for {{ $labels.service }} exceeds 1s over 5m."

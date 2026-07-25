@@ -1,0 +1,20 @@
+apiVersion: v2
+name: desksync
+description: |
+  DeskSync — secure remote developer workstation. Umbrella chart deploying the
+  nine Go microservices (gateway, auth, device, session, pairing, signaling,
+  relay, notification, monitoring) with autoscaling, disruption budgets,
+  ingress, Prometheus scraping, and a pre-upgrade database-migration job.
+type: application
+# Chart version (bump on chart changes). appVersion tracks the app image tag.
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - remote-desktop
+  - webrtc
+  - microservices
+home: https://github.com/dkmadhu115/desksync
+sources:
+  - https://github.com/dkmadhu115/desksync
+maintainers:
+  - name: DeskSync

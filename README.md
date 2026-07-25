@@ -56,8 +56,8 @@ specification and [`docs/`](docs/) for design artifacts.
 | 6 | Device pairing (device registration + presence, QR/manual codes, trust, persistent pairing; agent enrollment + pairing initiation) | ✅ done |
 | 7 | Remote desktop (live video rendering, keyboard, mouse, clipboard over the WebRTC data channel) | ✅ done |
 | 8 | Developer features (Quick Launch editors/terminals, saved workspaces, curated Git/Docker/kubectl/Helm/SSH shortcuts over an allowlisted control channel) | ✅ done |
-| 9 | Security hardening (E2E X25519→HKDF→AES-256-GCM secure channel with replay protection, Ed25519 device certificates, TLS cert pinning) | ✅ current |
-| 10 | Production deployment (Docker, K8s, Helm, CI/CD, monitoring) | pending |
+| 9 | Security hardening (E2E X25519→HKDF→AES-256-GCM secure channel with replay protection, Ed25519 device certificates, TLS cert pinning) | ✅ done |
+| 10 | Production deployment (distroless images, umbrella Helm chart with HPA/PDB/Ingress/migration hook, GHCR CI/CD, Prometheus/Grafana/Loki monitoring) | ✅ current |
 
 ## Getting started (local dev)
 
@@ -70,12 +70,26 @@ make run-gateway              # boot the API gateway (stub in Phase 1)
 
 See the [`Makefile`](Makefile) for all available targets.
 
+## Deployment
+
+```bash
+make images                   # build all service images + the migrations image
+make obs-up                   # local Prometheus/Grafana/Loki/Promtail stack
+make helm-lint helm-template  # validate the Kubernetes Helm chart
+make k8s-deploy IMAGE_TAG=... # helm upgrade --install into the desksync namespace
+```
+
+Images publish to GHCR via [CI/CD](.github/workflows/cd.yml); the umbrella chart
+lives in [`helm/desksync`](helm/desksync). See the
+[deployment & operations guide](docs/design/deployment.md).
+
 ## Documentation
 
 - [Architecture & diagrams](docs/design/architecture.md)
 - [Database design](docs/design/database.md)
 - [API design](docs/design/api.md)
 - [Security design](docs/design/security.md)
+- [Deployment & operations](docs/design/deployment.md)
 - [Threat model](docs/design/threat-model.md)
 - [Architecture Decision Records](docs/adr/)
 

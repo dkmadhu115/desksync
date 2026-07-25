@@ -1,0 +1,14 @@
+# Grafana dashboard provider: loads JSON dashboards from disk on startup.
+apiVersion: 1
+
+providers:
+  - name: DeskSync
+    orgId: 1
+    folder: DeskSync
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

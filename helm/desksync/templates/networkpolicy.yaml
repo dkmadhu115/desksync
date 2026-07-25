@@ -1,0 +1,34 @@
+{{- $ := . -}}
+{{- if .Values.networkPolicy.enabled }}
+{{- range $name, $svc := .Values.services }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "desksync.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "desksync.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "desksync.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $name }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # In-namespace peers (other DeskSync services, Prometheus scraping).
+        - podSelector: {}
+        {{- if $svc.public }}
+        # Ingress controller for public services.
+        {{- with $.Values.networkPolicy.ingressNamespaceSelector }}
+        - namespaceSelector:
+            {{- toYaml . | nindent 12 }}
+        {{- end }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ $svc.port }}
+{{- end }}
+{{- end }}

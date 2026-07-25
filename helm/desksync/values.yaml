@@ -1,0 +1,176 @@
+# Default values for the DeskSync umbrella chart.
+# Production installs override image tag, ingress host, and secrets (ideally via
+# an external secret manager referenced through secrets.existingSecret).
+
+global:
+  image:
+    registry: ghcr.io
+    # Owner/repo path; per-service images are <registry>/<repository>/<service>.
+    repository: dkmadhu115/desksync
+    # Empty defaults to Chart.appVersion, so `helm upgrade` pins to the chart.
+    tag: ""
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Default replica count when autoscaling is disabled.
+replicaCount: 2
+
+# Non-secret configuration, rendered into a shared ConfigMap and injected into
+# every service via envFrom.
+config:
+  environment: production
+  logLevel: info
+  logFormat: json
+  jwtIssuer: desksync
+  jwtAccessTtl: 15m
+  jwtRefreshTtl: 720h
+  signalingTicketTtl: 2m
+  # Externally reachable signaling WebSocket URL returned to clients.
+  signalingPublicUrl: wss://api.desksync.example.com/api/v1/signaling/ws
+  turnCredentialTtl: 1h
+  turnRealm: desksync
+  stunUrls: stun:stun.l.google.com:19302
+  turnUrls: turn:turn.desksync.example.com:3478
+  otelExporterOtlpEndpoint: ""
+  rateLimitRps: "20"
+  rateLimitBurst: "40"
+
+# Secrets. In production, provision these through an external secret manager and
+# set existingSecret to the resulting Secret name (leaving create=false). For
+# demo installs, set create=true and fill data (Helm base64-encodes it).
+secrets:
+  create: true
+  existingSecret: ""
+  data:
+    DATABASE_URL: "postgres://desksync:change-me@postgres:5432/desksync?sslmode=require"
+    REDIS_ADDR: "redis:6379"
+    REDIS_PASSWORD: ""
+    JWT_ACCESS_SECRET: "change-me-access-secret-min-32-bytes"
+    JWT_REFRESH_SECRET: "change-me-refresh-secret-min-32-bytes"
+    SIGNALING_TICKET_SECRET: "change-me-signaling-secret-min-32-bytes"
+    TURN_STATIC_AUTH_SECRET: "change-me-turn-secret"
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Pod- and container-level hardening applied to every service. The images are
+# distroless/static:nonroot, so these are all satisfiable.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop: ["ALL"]
+
+# Default resource requests/limits (per-service overridable under services.*.resources).
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: "1"
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Spread and placement (applied to all services).
+nodeSelector: {}
+tolerations: []
+# Prefer spreading replicas of the same component across nodes.
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+
+# The nine services. `public: true` places the service behind the ingress at
+# `ingressPath`. Each may override replicas/resources/autoscaling.
+services:
+  gateway:
+    port: 8080
+    addrEnv: GATEWAY_HTTP_ADDR
+    public: true
+    ingressPath: /
+  auth:
+    port: 8081
+    addrEnv: AUTH_HTTP_ADDR
+  device:
+    port: 8082
+    addrEnv: DEVICE_HTTP_ADDR
+  session:
+    port: 8083
+    addrEnv: SESSION_HTTP_ADDR
+  pairing:
+    port: 8084
+    addrEnv: PAIRING_HTTP_ADDR
+  signaling:
+    port: 8085
+    addrEnv: SIGNALING_HTTP_ADDR
+    public: true
+    ingressPath: /api/v1/signaling
+  relay:
+    port: 8086
+    addrEnv: RELAY_HTTP_ADDR
+  notification:
+    port: 8087
+    addrEnv: NOTIFICATION_HTTP_ADDR
+  monitoring:
+    port: 8088
+    addrEnv: MONITORING_HTTP_ADDR
+
+ingress:
+  enabled: true
+  className: nginx
+  host: api.desksync.example.com
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+  tls:
+    enabled: true
+    secretName: desksync-tls
+
+# Database migration Job (Helm pre-install/pre-upgrade hook). The image bundles
+# backend/migrations (see docker/Dockerfile.migrations).
+migrations:
+  enabled: true
+  image:
+    registry: ghcr.io
+    repository: dkmadhu115/desksync
+    name: migrations
+    tag: ""
+
+# Prometheus Operator integration (requires the CRDs to be installed).
+serviceMonitor:
+  enabled: false
+  interval: 15s
+  scrapeTimeout: 10s
+
+prometheusRule:
+  enabled: false
+
+# Restrict traffic: only the ingress controller may reach public services, and
+# only in-namespace peers may reach internal ones.
+networkPolicy:
+  enabled: false
+  ingressNamespaceSelector: {}

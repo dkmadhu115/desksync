@@ -1,0 +1,140 @@
+name: CD
+
+# Build and publish container images and the Helm chart, then (optionally)
+# deploy. Images are pushed to GHCR on pushes to main and on version tags.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Run the deploy job against the production cluster"
+        type: boolean
+        default: false
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  images:
+    name: Build & push images
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: gateway,      context: backend, dockerfile: docker/Dockerfile.service,    build_args: "SERVICE=gateway" }
+          - { name: auth,         context: backend, dockerfile: docker/Dockerfile.service,    build_args: "SERVICE=auth" }
+          - { name: device,       context: backend, dockerfile: docker/Dockerfile.service,    build_args: "SERVICE=device" }
+          - { name: session,      context: backend, dockerfile: docker/Dockerfile.service,    build_args: "SERVICE=session" }
+          - { name: pairing,      context: backend, dockerfile: docker/Dockerfile.service,    build_args: "SERVICE=pairing" }
+          - { name: signaling,    context: backend, dockerfile: docker/Dockerfile.service,    build_args: "SERVICE=signaling" }
+          - { name: relay,        context: backend, dockerfile: docker/Dockerfile.service,    build_args: "SERVICE=relay" }
+          - { name: notification, context: backend, dockerfile: docker/Dockerfile.service,    build_args: "SERVICE=notification" }
+          - { name: monitoring,   context: backend, dockerfile: docker/Dockerfile.service,    build_args: "SERVICE=monitoring" }
+          - { name: migrations,   context: ".",     dockerfile: docker/Dockerfile.migrations, build_args: "" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/desksync/${{ matrix.name }}
+          tags: |
+            type=sha,format=long
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          build-args: ${{ matrix.build_args }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  chart:
+    name: Package Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+      - name: Lint
+        run: helm lint helm/desksync
+      - name: Template (smoke render)
+        run: helm template rel helm/desksync --set serviceMonitor.enabled=true --set prometheusRule.enabled=true >/dev/null
+      - name: Package
+        run: helm package helm/desksync --destination dist/
+      - name: Upload chart artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-chart
+          path: dist/*.tgz
+
+  deploy:
+    name: Deploy (production)
+    needs: [images, chart]
+    runs-on: ubuntu-latest
+    # Only on version tags or an explicit dispatch request.
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.deploy)
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+      - name: Configure kubeconfig
+        id: kube
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          if [ -z "$KUBE_CONFIG" ]; then
+            echo "No KUBE_CONFIG secret configured; skipping deploy." >&2
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p "$HOME/.kube"
+          echo "$KUBE_CONFIG" | base64 -d > "$HOME/.kube/config"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+      - name: Helm upgrade
+        if: steps.kube.outputs.ready == 'true'
+        # The immutable `sha-<commit>` tag is always published by the images job,
+        # so deploy pins to it regardless of branch/tag trigger.
+        env:
+          IMAGE_TAG: sha-${{ github.sha }}
+        run: |
+          helm upgrade --install desksync helm/desksync \
+            --namespace desksync --create-namespace \
+            --set global.image.tag="${IMAGE_TAG}" \
+            --set secrets.create=false \
+            --set secrets.existingSecret=desksync-secrets \
+            --wait --timeout 10m

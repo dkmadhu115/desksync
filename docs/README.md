@@ -24,6 +24,8 @@ Design artifacts for the DeskSync remote-desktop system. See the root
   lifecycle, devices/pairing, and the touch-control input pipeline.
 - [Developer features](design/devtools.md) — Quick Launch editors/terminals,
   saved workspaces, curated tool shortcuts, and the allowlisted control channel.
+- [Deployment & operations](design/deployment.md) — container images, the Helm
+  chart, CI/CD pipelines, and the metrics/logs/tracing stack.
 
 ## Architecture Decision Records
 
@@ -36,6 +38,7 @@ Design artifacts for the DeskSync remote-desktop system. See the root
 - [ADR 0007 — Ephemeral, hashed pairing challenges in Redis](adr/0007-ephemeral-pairing-challenges.md)
 - [ADR 0008 — Allowlisted developer actions (no remote command execution)](adr/0008-devtools-allowlist.md)
 - [ADR 0009 — Application-layer end-to-end secure channel](adr/0009-e2e-secure-channel.md)
+- [ADR 0010 — Kubernetes deployment via a single umbrella Helm chart](adr/0010-kubernetes-helm-deployment.md)
 
 ## Phase status
 

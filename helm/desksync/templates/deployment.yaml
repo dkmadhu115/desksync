@@ -1,0 +1,94 @@
+{{- $ := . -}}
+{{- $tag := include "desksync.imageTag" . -}}
+{{- range $name, $svc := .Values.services }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "desksync.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "desksync.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  {{- if not $.Values.autoscaling.enabled }}
+  replicas: {{ $svc.replicas | default $.Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "desksync.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $name }}
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: {{ $svc.port | quote }}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") $ | sha256sum }}
+      labels:
+        {{- include "desksync.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: {{ $name }}
+    spec:
+      serviceAccountName: {{ include "desksync.serviceAccountName" $ }}
+      {{- with $.Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ $name }}
+          image: "{{ $.Values.global.image.registry }}/{{ $.Values.global.image.repository }}/{{ $name }}:{{ $tag }}"
+          imagePullPolicy: {{ $.Values.global.image.pullPolicy }}
+          securityContext:
+            {{- toYaml $.Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ $svc.port }}
+              protocol: TCP
+          env:
+            - name: {{ $svc.addrEnv }}
+              value: ":{{ $svc.port }}"
+          envFrom:
+            - configMapRef:
+                name: {{ include "desksync.fullname" $ }}-config
+            - secretRef:
+                name: {{ include "desksync.secretName" $ }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml ($svc.resources | default $.Values.resources) | nindent 12 }}
+      {{- with $.Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- range . }}
+        - maxSkew: {{ .maxSkew }}
+          topologyKey: {{ .topologyKey }}
+          whenUnsatisfiable: {{ .whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              {{- include "desksync.selectorLabels" $ | nindent 14 }}
+              app.kubernetes.io/component: {{ $name }}
+        {{- end }}
+      {{- end }}
+{{- end }}

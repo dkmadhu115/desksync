@@ -1,0 +1,28 @@
+DeskSync {{ .Chart.AppVersion }} has been deployed as release "{{ .Release.Name }}"
+in namespace "{{ .Release.Namespace }}".
+
+Services (ClusterIP):
+{{- range $name, $svc := .Values.services }}
+  - {{ $name }}  →  http://{{ $name }}.{{ $.Release.Namespace }}.svc.cluster.local:{{ $svc.port }}
+{{- end }}
+
+Image tag in use: {{ include "desksync.imageTag" . }}
+
+{{- if .Values.ingress.enabled }}
+
+Public entrypoint (Ingress, class "{{ .Values.ingress.className }}"):
+  https://{{ .Values.ingress.host }}/
+{{- end }}
+
+Check rollout status:
+  kubectl -n {{ .Release.Namespace }} get deploy,po,hpa -l app.kubernetes.io/instance={{ .Release.Name }}
+
+Follow logs for a service (e.g. gateway):
+  kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/component=gateway -f
+
+{{- if .Values.secrets.create }}
+
+WARNING: secrets.create=true renders secret values from values.yaml. For
+production, provision secrets via an external manager and set
+secrets.existingSecret instead.
+{{- end }}

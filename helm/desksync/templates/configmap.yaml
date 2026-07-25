@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "desksync.fullname" . }}-config
+  labels:
+    {{- include "desksync.labels" . | nindent 4 }}
+data:
+  ENVIRONMENT: {{ .Values.config.environment | quote }}
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  LOG_FORMAT: {{ .Values.config.logFormat | quote }}
+  JWT_ISSUER: {{ .Values.config.jwtIssuer | quote }}
+  JWT_ACCESS_TTL: {{ .Values.config.jwtAccessTtl | quote }}
+  JWT_REFRESH_TTL: {{ .Values.config.jwtRefreshTtl | quote }}
+  SIGNALING_TICKET_TTL: {{ .Values.config.signalingTicketTtl | quote }}
+  SIGNALING_PUBLIC_URL: {{ .Values.config.signalingPublicUrl | quote }}
+  TURN_CREDENTIAL_TTL: {{ .Values.config.turnCredentialTtl | quote }}
+  TURN_REALM: {{ .Values.config.turnRealm | quote }}
+  STUN_URLS: {{ .Values.config.stunUrls | quote }}
+  TURN_URLS: {{ .Values.config.turnUrls | quote }}
+  RATE_LIMIT_RPS: {{ .Values.config.rateLimitRps | quote }}
+  RATE_LIMIT_BURST: {{ .Values.config.rateLimitBurst | quote }}
+  {{- with .Values.config.otelExporterOtlpEndpoint }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ . | quote }}
+  {{- end }}

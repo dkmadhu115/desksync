@@ -1,0 +1,12 @@
+# Migrations image: the golang-migrate CLI with the DeskSync SQL migrations
+# baked in at /migrations. Used by the Helm pre-install/pre-upgrade Job to bring
+# the schema up before the services roll out.
+#
+# Build context MUST be the repository root so `backend/migrations` is visible:
+#   docker build -f docker/Dockerfile.migrations -t desksync/migrations .
+FROM migrate/migrate:v4.17.1
+COPY backend/migrations /migrations
+# The Helm Job overrides the entrypoint with `sh -c "migrate ... up"`; running
+# this image directly prints the CLI help.
+ENTRYPOINT ["migrate"]
+CMD ["--help"]

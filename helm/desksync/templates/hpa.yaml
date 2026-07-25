@@ -1,0 +1,40 @@
+{{- $ := . -}}
+{{- if .Values.autoscaling.enabled }}
+{{- range $name, $svc := .Values.services }}
+{{- $auto := $svc.autoscaling | default $.Values.autoscaling }}
+{{- if $auto.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "desksync.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "desksync.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "desksync.fullname" $ }}-{{ $name }}
+  minReplicas: {{ $auto.minReplicas }}
+  maxReplicas: {{ $auto.maxReplicas }}
+  metrics:
+    {{- if $auto.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $auto.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if $auto.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ $auto.targetMemoryUtilizationPercentage }}
+    {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
