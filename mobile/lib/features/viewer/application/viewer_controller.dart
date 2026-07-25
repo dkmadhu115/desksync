@@ -3,6 +3,7 @@
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -82,8 +83,14 @@ class ViewerController extends ChangeNotifier {
   String? _sessionId;
   bool _disposed = false;
 
-  /// The renderer showing the remote desktop, once a session exists.
+  /// The renderer showing the remote desktop, once a session exists (reserved
+  /// for a future hardware video track).
   RTCVideoRenderer? get renderer => _session?.remoteRenderer;
+
+  /// The latest decoded screen frame pushed by the desktop, once a session
+  /// exists. Already decoded to a [ui.Image] so the UI can paint it directly
+  /// with `RawImage` (bypassing the memory-hungry `ImageCache`).
+  ValueListenable<ui.Image?>? get videoFrame => _session?.videoFrame;
 
   /// Resolve the pairing, create the session, and start the connection.
   Future<void> connect() async {

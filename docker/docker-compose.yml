@@ -42,8 +42,10 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-desksync}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
       POSTGRES_DB: ${POSTGRES_DB:-desksync}
+    # Bound to loopback only: services reach it over the compose network by name.
+    # Never expose the database to the public internet.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -55,8 +57,9 @@ services:
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--save", "", "--appendonly", "no"]
+    # Loopback only — internal services connect via the compose network.
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -108,8 +111,9 @@ services:
     environment:
       <<: *service-env
       AUTH_HTTP_ADDR: ":8081"
+    # Internal only — public traffic reaches auth through the gateway (:8080).
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
 
   device:
     <<: *service-base
@@ -121,8 +125,9 @@ services:
     environment:
       <<: *service-env
       DEVICE_HTTP_ADDR: ":8082"
+    # Internal only — reached through the gateway (:8080).
     ports:
-      - "8082:8082"
+      - "127.0.0.1:8082:8082"
 
   session:
     <<: *service-base
@@ -134,8 +139,9 @@ services:
     environment:
       <<: *service-env
       SESSION_HTTP_ADDR: ":8083"
+    # Internal only — reached through the gateway (:8080).
     ports:
-      - "8083:8083"
+      - "127.0.0.1:8083:8083"
 
   pairing:
     <<: *service-base
@@ -147,8 +153,9 @@ services:
     environment:
       <<: *service-env
       PAIRING_HTTP_ADDR: ":8084"
+    # Internal only — reached through the gateway (:8080).
     ports:
-      - "8084:8084"
+      - "127.0.0.1:8084:8084"
 
   signaling:
     <<: *service-base
@@ -173,8 +180,9 @@ services:
     environment:
       <<: *service-env
       RELAY_HTTP_ADDR: ":8086"
+    # Internal only — reached through the gateway (:8080).
     ports:
-      - "8086:8086"
+      - "127.0.0.1:8086:8086"
 
   notification:
     <<: *service-base
@@ -186,8 +194,9 @@ services:
     environment:
       <<: *service-env
       NOTIFICATION_HTTP_ADDR: ":8087"
+    # Internal only — reached through the gateway (:8080).
     ports:
-      - "8087:8087"
+      - "127.0.0.1:8087:8087"
 
   monitoring:
     <<: *service-base
@@ -199,8 +208,9 @@ services:
     environment:
       <<: *service-env
       MONITORING_HTTP_ADDR: ":8088"
+    # Internal only — reached through the gateway (:8080).
     ports:
-      - "8088:8088"
+      - "127.0.0.1:8088:8088"
 
 volumes:
   pgdata:

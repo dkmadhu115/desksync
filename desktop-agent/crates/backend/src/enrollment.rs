@@ -161,6 +161,14 @@ mod tests {
         async fn heartbeat(&self, _access_token: &str, _device_id: &str) -> Result<()> {
             Ok(())
         }
+
+        async fn pending_sessions(
+            &self,
+            _access_token: &str,
+            _device_id: &str,
+        ) -> Result<Vec<crate::models::PendingSession>> {
+            Ok(vec![])
+        }
     }
 
     #[tokio::test]

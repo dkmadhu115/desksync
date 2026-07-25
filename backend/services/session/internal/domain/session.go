@@ -73,6 +73,10 @@ type Repository interface {
 	GetSession(ctx context.Context, id, userID string) (Session, error)
 	// ListSessions returns the user's most recent sessions (bounded by limit).
 	ListSessions(ctx context.Context, userID string, limit int) ([]Session, error)
+	// PendingSessionsForDevice returns the user's sessions that are still
+	// connecting and belong to a pairing whose desktop device is the given one.
+	// It is how a desktop agent discovers incoming sessions to answer.
+	PendingSessionsForDevice(ctx context.Context, userID, desktopDeviceID string, limit int) ([]Session, error)
 	// EndSession transitions a session to ended (idempotent) and returns it.
 	EndSession(ctx context.Context, id, userID, reason string) (Session, error)
 	// AppendEvent records an append-only session event.

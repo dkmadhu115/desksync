@@ -77,3 +77,43 @@ Effective image tag (defaults to the chart appVersion).
 {{- define "desksync.imageTag" -}}
 {{- .Values.global.image.tag | default .Chart.AppVersion -}}
 {{- end -}}
+
+{{/*
+Build an image reference from (registry, repository, name, tag), omitting any
+empty registry/repository segments. This lets the chart reference public
+registry images (ghcr.io/owner/repo/name:tag) as well as images imported
+directly into the node's container runtime (e.g. desksync/name:tag or
+name:tag) with no registry prefix.
+Usage: {{ include "desksync.imageRef" (list $registry $repository $name $tag) }}
+*/}}
+{{- define "desksync.imageRef" -}}
+{{- $registry := index . 0 -}}
+{{- $repository := index . 1 -}}
+{{- $name := index . 2 -}}
+{{- $tag := index . 3 -}}
+{{- $ref := printf "%s:%s" $name $tag -}}
+{{- if $repository -}}{{- $ref = printf "%s/%s" $repository $ref -}}{{- end -}}
+{{- if $registry -}}{{- $ref = printf "%s/%s" $registry $ref -}}{{- end -}}
+{{- $ref -}}
+{{- end -}}
+
+{{/*
+Effective DATABASE_URL. When the in-cluster Postgres is enabled it is derived
+from postgres.auth so the app, migrations, and the database always agree;
+otherwise the operator-supplied secrets.data.DATABASE_URL is used.
+*/}}
+{{- define "desksync.databaseUrl" -}}
+{{- if .Values.postgres.enabled -}}
+{{- $a := .Values.postgres.auth -}}
+{{- printf "postgres://%s:%s@postgres:5432/%s?sslmode=disable" $a.username $a.password $a.database -}}
+{{- else -}}
+{{- .Values.secrets.data.DATABASE_URL -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Effective REDIS_ADDR (in-cluster redis service or operator-supplied value).
+*/}}
+{{- define "desksync.redisAddr" -}}
+{{- if .Values.redis.enabled -}}redis:6379{{- else -}}{{- .Values.secrets.data.REDIS_ADDR -}}{{- end -}}
+{{- end -}}

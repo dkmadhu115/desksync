@@ -145,6 +145,34 @@ func (s *Service) ListSessions(ctx context.Context, userID string) ([]domain.Ses
 	return sessions, nil
 }
 
+// PendingForDevice returns the connecting sessions the given desktop device
+// should answer, each with a freshly-issued **agent** signaling ticket plus the
+// signaling URL and ICE configuration needed to join. This is the agent-side
+// counterpart to CreateSession (which serves the controller).
+func (s *Service) PendingForDevice(ctx context.Context, userID, desktopDeviceID string) ([]Created, error) {
+	if desktopDeviceID == "" {
+		return nil, apperr.New(apperr.CodeInvalidInput, "device_id is required")
+	}
+	sessions, err := s.repo.PendingSessionsForDevice(ctx, userID, desktopDeviceID, 10)
+	if err != nil {
+		return nil, apperr.Wrap(apperr.CodeInternal, "failed to list pending sessions", err)
+	}
+	out := make([]Created, 0, len(sessions))
+	for _, session := range sessions {
+		ticket, err := s.tickets.Issue(session.ID, userID, signalticket.RoleAgent)
+		if err != nil {
+			return nil, apperr.Wrap(apperr.CodeInternal, "failed to issue signaling ticket", err)
+		}
+		out = append(out, Created{
+			Session:         session,
+			SignalingURL:    s.signalingURL,
+			SignalingTicket: ticket,
+			ICEServers:      s.ice.Build(session.ID),
+		})
+	}
+	return out, nil
+}
+
 // EndSession terminates a session (idempotent).
 func (s *Service) EndSession(ctx context.Context, userID, id, reason string) (domain.Session, error) {
 	if reason == "" {

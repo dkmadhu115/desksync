@@ -12,6 +12,7 @@ members = [
     "crates/capture",
     "crates/input",
     "crates/transport",
+    "crates/media",
     "crates/backend",
     "crates/devtools",
     "crates/config-ui",
@@ -75,6 +76,7 @@ desksync-crypto = { path = "crates/crypto" }
 desksync-capture = { path = "crates/capture" }
 desksync-input = { path = "crates/input" }
 desksync-transport = { path = "crates/transport" }
+desksync-media = { path = "crates/media" }
 desksync-backend = { path = "crates/backend" }
 desksync-devtools = { path = "crates/devtools" }
 

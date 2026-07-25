@@ -41,6 +41,14 @@ func (r *SessionRepo) PairingForUser(ctx context.Context, pairingID, userID stri
 const sessionColumns = `id, pairing_id, user_id, status, connection_type,
 	started_at, ended_at, end_reason, timeout_seconds, created_at`
 
+// prefixedSessionColumns returns the session columns qualified with a table
+// alias, for queries that JOIN other tables (e.g. pairings).
+func prefixedSessionColumns(alias string) string {
+	return alias + `.id, ` + alias + `.pairing_id, ` + alias + `.user_id, ` + alias + `.status, ` +
+		alias + `.connection_type, ` + alias + `.started_at, ` + alias + `.ended_at, ` +
+		alias + `.end_reason, ` + alias + `.timeout_seconds, ` + alias + `.created_at`
+}
+
 func scanSession(row pgx.Row) (domain.Session, error) {
 	var s domain.Session
 	var connType *string
@@ -86,6 +94,38 @@ func (r *SessionRepo) ListSessions(ctx context.Context, userID string, limit int
 	rows, err := r.pool.Query(ctx, q, userID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var out []domain.Session
+	for rows.Next() {
+		s, err := scanSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// PendingSessionsForDevice returns connecting sessions for the user whose
+// pairing targets the given desktop device. The agent polls this to discover
+// sessions it should answer.
+func (r *SessionRepo) PendingSessionsForDevice(ctx context.Context, userID, desktopDeviceID string, limit int) ([]domain.Session, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	q := `SELECT ` + prefixedSessionColumns("s") + `
+		FROM sessions s
+		JOIN pairings p ON p.id = s.pairing_id
+		WHERE s.user_id = $1
+		  AND p.desktop_device_id = $2
+		  AND s.status = 'connecting'
+		ORDER BY s.started_at DESC
+		LIMIT $3`
+	rows, err := r.pool.Query(ctx, q, userID, desktopDeviceID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("pending sessions: %w", err)
 	}
 	defer rows.Close()
 

@@ -8,6 +8,31 @@ Services (ClusterIP):
 
 Image tag in use: {{ include "desksync.imageTag" . }}
 
+In-cluster infrastructure:
+{{- if .Values.postgres.enabled }}
+  - postgres (StatefulSet, {{ .Values.postgres.storage.size }} PVC)
+{{- end }}
+{{- if .Values.redis.enabled }}
+  - redis
+{{- end }}
+{{- if .Values.coturn.enabled }}
+  - coturn (TURN/STUN{{ if .Values.coturn.hostNetwork }}, hostNetwork{{ end }})
+{{- end }}
+
+{{- $lb := dict }}
+{{- range $name, $svc := .Values.services }}
+{{- if eq ($svc.serviceType | default "ClusterIP") "LoadBalancer" }}
+{{- $_ := set $lb $name $svc }}
+{{- end }}
+{{- end }}
+{{- if $lb }}
+
+Public entrypoints (LoadBalancer, on the node IP):
+{{- range $name, $svc := $lb }}
+  - {{ $name }}  →  :{{ $svc.port }}   (kubectl -n {{ $.Release.Namespace }} get svc {{ $name }})
+{{- end }}
+{{- end }}
+
 {{- if .Values.ingress.enabled }}
 
 Public entrypoint (Ingress, class "{{ .Values.ingress.className }}"):

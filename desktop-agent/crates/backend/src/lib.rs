@@ -21,7 +21,9 @@ pub mod qr;
 pub use client::{BackendApi, BackendClient};
 pub use enrollment::{Credentials, DeviceProfile, Enrollment, EnrollmentOutcome};
 pub use error::{BackendError, Result};
-pub use models::{Device, DeviceRegistration, PairingChallenge, TokenPair};
+pub use models::{
+    Device, DeviceRegistration, IceServer, PairingChallenge, PendingSession, PendingSessions, SessionRef, TokenPair,
+};
 pub use qr::render_qr;
 
 /// Map the host OS to the backend's device `platform` enum

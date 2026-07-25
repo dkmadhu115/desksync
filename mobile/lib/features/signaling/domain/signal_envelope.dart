@@ -53,6 +53,7 @@ sealed class SignalPayload {
         return IceCandidatePayload(
           candidate: json['candidate'] as String? ?? '',
           sdpMLineIndex: (json['sdp_m_line_index'] as num?)?.toInt() ?? 0,
+          sdpMid: json['sdp_mid'] as String?,
         );
       case SignalKind.heartbeat:
         return const HeartbeatPayload();
@@ -100,6 +101,7 @@ class IceCandidatePayload extends SignalPayload {
   const IceCandidatePayload({
     required this.candidate,
     required this.sdpMLineIndex,
+    this.sdpMid,
   });
 
   /// The candidate line.
@@ -107,11 +109,26 @@ class IceCandidatePayload extends SignalPayload {
 
   /// The media line index.
   final int sdpMLineIndex;
+
+  /// The media stream identification (`a=mid`) the candidate belongs to.
+  ///
+  /// Optional on the wire for backward compatibility with peers that only send
+  /// [sdpMLineIndex]. It matters on the receiving side: the native Android
+  /// `org.webrtc` build throws a `NullPointerException` in
+  /// `JniHelper.getStringBytes` if `addIceCandidate` is handed a null mid, which
+  /// crashes the whole app. Consumers must substitute a non-null value (e.g.
+  /// the index as a string) when this is absent.
+  final String? sdpMid;
+
   @override
   String get kind => SignalKind.iceCandidate;
   @override
-  Map<String, dynamic> toJson() =>
-      {'kind': kind, 'candidate': candidate, 'sdp_m_line_index': sdpMLineIndex};
+  Map<String, dynamic> toJson() => {
+        'kind': kind,
+        'candidate': candidate,
+        'sdp_m_line_index': sdpMLineIndex,
+        if (sdpMid != null) 'sdp_mid': sdpMid,
+      };
 }
 
 /// Keep-alive heartbeat.

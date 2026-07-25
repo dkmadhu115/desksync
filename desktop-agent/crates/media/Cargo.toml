@@ -1,0 +1,33 @@
+[package]
+name = "desksync-media"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# The screen encoder (BGRA -> JPEG) is pure Rust and always compiled/tested.
+# The WebRTC peer pulls in the (pure-Rust) `webrtc` stack and is gated behind
+# the `rtc` feature so default/headless builds stay lean.
+[features]
+default = []
+rtc = ["dep:webrtc", "dep:bytes"]
+
+[dependencies]
+desksync-core = { workspace = true }
+desksync-capture = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+# Pure-Rust baseline JPEG encoder for the frame stream (no system libraries).
+jpeg-encoder = "0.6"
+webrtc = { version = "0.17", optional = true }
+bytes = { version = "1", optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

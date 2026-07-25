@@ -1,0 +1,97 @@
+# DeskSync — single-node k3s deployment override (Azure 20.109.60.233).
+#
+# Deployed into its own `desksync` namespace, coexisting with the existing
+# apollo-mech / runtime workloads on the same k3s cluster.
+#
+# Real secrets are NOT stored here; they are injected at install time, e.g.:
+#   helm upgrade --install desksync helm/desksync -n desksync --create-namespace \
+#     -f helm/desksync/values-azure.yaml \
+#     --set-string postgres.auth.password=$PG \
+#     --set-string secrets.data.JWT_ACCESS_SECRET=$JA \
+#     --set-string secrets.data.JWT_REFRESH_SECRET=$JR \
+#     --set-string secrets.data.SIGNALING_TICKET_SECRET=$SG \
+#     --set-string secrets.data.TURN_STATIC_AUTH_SECRET=$TN
+#
+# Images are built on the node and imported into k3s containerd (no registry),
+# so pullPolicy is Never and the ref is <repository>/<service>:<tag>.
+
+global:
+  image:
+    registry: ""
+    repository: desksync
+    tag: local
+    pullPolicy: Never
+
+# Single node: one replica per service, no HPA/PDB/topology spread.
+replicaCount: 1
+autoscaling:
+  enabled: false
+podDisruptionBudget:
+  enabled: false
+topologySpreadConstraints: []
+
+# No ingress controller / TLS on a bare IP — public services are exposed
+# directly via k3s ServiceLB (klipper) on the node IP at their service port.
+ingress:
+  enabled: false
+
+config:
+  environment: production
+  logLevel: info
+  logFormat: json
+  signalingPublicUrl: ws://20.109.60.233:8085/api/v1/signaling/ws
+  stunUrls: stun:stun.l.google.com:19302
+  turnUrls: turn:20.109.60.233:3478
+  turnRealm: desksync
+
+postgres:
+  enabled: true
+  auth:
+    username: desksync
+    # Overridden at install time via --set-string postgres.auth.password=...
+    password: change-me
+    database: desksync
+  storage:
+    size: 10Gi
+    storageClassName: local-path
+
+redis:
+  enabled: true
+
+coturn:
+  enabled: true
+  hostNetwork: true
+  # 1:1 NAT mapping: advertise the public IP but bind relays on the node's
+  # private NIC (Azure maps 20.109.60.233 -> 10.2.0.4).
+  externalIP: "20.109.60.233/10.2.0.4"
+  # Pin the relay media port range to a small, fixed window so it can be opened
+  # in the Azure NSG. Without these open, TURN allocates relay candidates on
+  # random high ports (49152-65535) that the NSG blocks, so ICE fails even
+  # though the 3478 control channel works. Keep in sync with the NSG rule.
+  extraArgs:
+    - "--min-port=50000"
+    - "--max-port=50100"
+
+migrations:
+  enabled: true
+  image:
+    registry: ""
+    repository: desksync
+    name: migrations
+    tag: local
+
+# Secret placeholders — overridden at install time via --set-string.
+secrets:
+  create: true
+  data:
+    JWT_ACCESS_SECRET: change-me-access-secret-min-32-bytes
+    JWT_REFRESH_SECRET: change-me-refresh-secret-min-32-bytes
+    SIGNALING_TICKET_SECRET: change-me-signaling-secret-min-32-bytes
+    TURN_STATIC_AUTH_SECRET: change-me-turn-secret
+
+# Expose gateway + signaling on the node IP (8080 / 8085) via ServiceLB.
+services:
+  gateway:
+    serviceType: LoadBalancer
+  signaling:
+    serviceType: LoadBalancer

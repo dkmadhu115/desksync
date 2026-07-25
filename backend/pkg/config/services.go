@@ -129,6 +129,28 @@ func splitCSV(s string) []string {
 	return out
 }
 
+// GatewayConfig holds the internal upstream base URLs the API gateway
+// reverse-proxies REST traffic to. Defaults match the docker-compose service
+// names so the gateway works out of the box in the local/VPS stack.
+type GatewayConfig struct {
+	AuthURL      string
+	DeviceURL    string
+	SessionURL   string
+	PairingURL   string
+	SignalingURL string
+}
+
+// LoadGateway reads the gateway upstream configuration from the environment.
+func LoadGateway() GatewayConfig {
+	return GatewayConfig{
+		AuthURL:      GetString("AUTH_UPSTREAM_URL", "http://auth:8081"),
+		DeviceURL:    GetString("DEVICE_UPSTREAM_URL", "http://device:8082"),
+		SessionURL:   GetString("SESSION_UPSTREAM_URL", "http://session:8083"),
+		PairingURL:   GetString("PAIRING_UPSTREAM_URL", "http://pairing:8084"),
+		SignalingURL: GetString("SIGNALING_UPSTREAM_URL", "http://signaling:8085"),
+	}
+}
+
 // OAuthProviderConfig holds a single OAuth provider's credentials.
 type OAuthProviderConfig struct {
 	ClientID     string

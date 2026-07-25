@@ -37,7 +37,7 @@ spec:
         {{- toYaml $.Values.podSecurityContext | nindent 8 }}
       containers:
         - name: {{ $name }}
-          image: "{{ $.Values.global.image.registry }}/{{ $.Values.global.image.repository }}/{{ $name }}:{{ $tag }}"
+          image: "{{ include "desksync.imageRef" (list $.Values.global.image.registry $.Values.global.image.repository $name $tag) }}"
           imagePullPolicy: {{ $.Values.global.image.pullPolicy }}
           securityContext:
             {{- toYaml $.Values.securityContext | nindent 12 }}

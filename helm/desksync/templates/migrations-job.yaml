@@ -1,21 +1,20 @@
 {{- if .Values.migrations.enabled }}
 {{- $tag := .Values.migrations.image.tag | default (include "desksync.imageTag" .) }}
+# Schema migrations run as a revision-scoped Job (a new Job per install/upgrade,
+# which sidesteps Job immutability). When the in-cluster Postgres is enabled an
+# initContainer blocks until the database accepts connections, so this works as
+# a normal release resource without relying on a pre-install hook (the hook
+# phase runs before the StatefulSet exists).
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "desksync.fullname" . }}-migrate
+  name: {{ include "desksync.fullname" . }}-migrate-{{ .Release.Revision }}
   labels:
     {{- include "desksync.labels" . | nindent 4 }}
     app.kubernetes.io/component: migrate
-  annotations:
-    # Run before the app rolls out, on every install and upgrade.
-    "helm.sh/hook": pre-install,pre-upgrade
-    "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
-  backoffLimit: 3
-  # Reap the pod shortly after completion.
-  ttlSecondsAfterFinished: 300
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 600
   template:
     metadata:
       labels:
@@ -30,9 +29,29 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.postgres.enabled }}
+      initContainers:
+        - name: wait-for-postgres
+          image: {{ .Values.postgres.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              until pg_isready -h postgres -p 5432 -U "{{ .Values.postgres.auth.username }}"; do
+                echo "waiting for postgres..."; sleep 2;
+              done
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- end }}
       containers:
         - name: migrate
-          image: "{{ .Values.migrations.image.registry }}/{{ .Values.migrations.image.repository }}/{{ .Values.migrations.image.name }}:{{ $tag }}"
+          image: "{{ include "desksync.imageRef" (list .Values.migrations.image.registry .Values.migrations.image.repository .Values.migrations.image.name $tag) }}"
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false

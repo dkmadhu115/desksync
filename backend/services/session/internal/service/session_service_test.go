@@ -44,6 +44,13 @@ func (f *fakeRepo) ListSessions(_ context.Context, _ string, _ int) ([]domain.Se
 	return []domain.Session{f.created}, nil
 }
 
+func (f *fakeRepo) PendingSessionsForDevice(_ context.Context, _, _ string, _ int) ([]domain.Session, error) {
+	if f.created.ID == "" {
+		return nil, nil
+	}
+	return []domain.Session{f.created}, nil
+}
+
 func (f *fakeRepo) EndSession(_ context.Context, id, _, _ string) (domain.Session, error) {
 	if id != f.created.ID {
 		return domain.Session{}, domain.ErrSessionNotFound
@@ -140,6 +147,50 @@ func TestEndSessionIdempotentSuccess(t *testing.T) {
 	}
 	if ended.Status != domain.StatusEnded {
 		t.Fatalf("status = %q, want ended", ended.Status)
+	}
+}
+
+func TestPendingForDeviceRequiresDeviceID(t *testing.T) {
+	svc := newService(t, &fakeRepo{})
+	_, err := svc.PendingForDevice(context.Background(), "user-1", "")
+	assertCode(t, err, apperr.CodeInvalidInput)
+}
+
+func TestPendingForDeviceIssuesAgentTickets(t *testing.T) {
+	repo := &fakeRepo{created: domain.Session{ID: "sess-1", Status: domain.StatusConnecting}}
+	svc := newService(t, repo)
+
+	pending, err := svc.PendingForDevice(context.Background(), "user-1", "desktop-1")
+	if err != nil {
+		t.Fatalf("PendingForDevice: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 pending session, got %d", len(pending))
+	}
+	if pending[0].SignalingTicket == "" {
+		t.Fatal("expected an agent signaling ticket")
+	}
+	ver, _ := signalticket.NewVerifier("test-signaling-secret-0123456789")
+	tk, err := ver.Verify(pending[0].SignalingTicket)
+	if err != nil {
+		t.Fatalf("verify ticket: %v", err)
+	}
+	if tk.SessionID != "sess-1" || tk.Role != signalticket.RoleAgent || tk.UserID != "user-1" {
+		t.Fatalf("unexpected ticket payload: %+v", tk)
+	}
+	if len(pending[0].ICEServers) == 0 {
+		t.Fatal("expected ICE servers in the pending response")
+	}
+}
+
+func TestPendingForDeviceEmpty(t *testing.T) {
+	svc := newService(t, &fakeRepo{})
+	pending, err := svc.PendingForDevice(context.Background(), "user-1", "desktop-1")
+	if err != nil {
+		t.Fatalf("PendingForDevice: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("expected no pending sessions, got %d", len(pending))
 	}
 }
 

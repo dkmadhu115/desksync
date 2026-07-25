@@ -104,8 +104,60 @@ topologySpreadConstraints:
     topologyKey: kubernetes.io/hostname
     whenUnsatisfiable: ScheduleAnyway
 
+# ---------------------------------------------------------------------------
+# In-cluster infrastructure. Set enabled=false for any of these to use a
+# managed/external equivalent (then supply the matching secrets.data values).
+# ---------------------------------------------------------------------------
+postgres:
+  enabled: true
+  image: postgres:16-alpine
+  auth:
+    username: desksync
+    password: change-me
+    database: desksync
+  storage:
+    size: 10Gi
+    # "" uses the cluster default StorageClass (k3s ships local-path).
+    storageClassName: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+redis:
+  enabled: true
+  image: redis:7-alpine
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: "500m"
+      memory: 128Mi
+
+coturn:
+  enabled: true
+  image: coturn/coturn:4.6-alpine
+  # hostNetwork exposes TURN + its media ports directly on the node's public IP.
+  hostNetwork: true
+  # Public IP advertised to peers; required for TURN relay across the internet.
+  externalIP: ""
+  extraArgs: []
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: "500m"
+      memory: 128Mi
+
 # The nine services. `public: true` places the service behind the ingress at
-# `ingressPath`. Each may override replicas/resources/autoscaling.
+# `ingressPath`. Set `serviceType: LoadBalancer` (or NodePort) to expose a
+# service directly on the node (useful without an ingress controller / on bare
+# IPs). Each may override replicas/resources/autoscaling.
 services:
   gateway:
     port: 8080

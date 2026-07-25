@@ -52,6 +52,58 @@ pub struct Device {
     pub status: String,
 }
 
+/// A single ICE server (STUN/TURN) from the session response.
+#[derive(Debug, Clone, Deserialize)]
+pub struct IceServer {
+    /// STUN/TURN URLs.
+    #[serde(default)]
+    pub urls: Vec<String>,
+    /// TURN username (empty for STUN).
+    #[serde(default)]
+    pub username: String,
+    /// TURN credential (empty for STUN).
+    #[serde(default)]
+    pub credential: String,
+}
+
+/// Minimal session identity embedded in the pending-session response.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionRef {
+    /// Session id (UUID).
+    pub id: String,
+    /// Owning pairing id.
+    #[serde(default)]
+    pub pairing_id: String,
+    /// Session status ("connecting", …).
+    #[serde(default)]
+    pub status: String,
+}
+
+/// A pending session the agent should answer, with everything needed to join:
+/// the signaling URL + short-lived agent ticket and the ICE configuration.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PendingSession {
+    /// The session identity.
+    pub session: SessionRef,
+    /// WebSocket signaling URL.
+    #[serde(default)]
+    pub signaling_url: String,
+    /// Short-lived signaling ticket (agent role).
+    #[serde(default)]
+    pub signaling_ticket: String,
+    /// ICE servers (STUN + optional TURN relay).
+    #[serde(default)]
+    pub ice_servers: Vec<IceServer>,
+}
+
+/// The `GET /api/v1/sessions/pending` response envelope.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PendingSessions {
+    /// Sessions awaiting the agent.
+    #[serde(default)]
+    pub sessions: Vec<PendingSession>,
+}
+
 /// The pairing challenge returned by `POST /api/v1/pairing/initiate`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PairingChallenge {

@@ -15,6 +15,7 @@ desksync-core.workspace = true
 desksync-capture.workspace = true
 desksync-input.workspace = true
 desksync-transport.workspace = true
+desksync-media.workspace = true
 desksync-backend.workspace = true
 desksync-devtools.workspace = true
 tokio.workspace = true
@@ -27,4 +28,4 @@ serde_json.workspace = true
 # Build the agent with the real capture/input/clipboard backends. Off by
 # default so `cargo build` works on headless CI; enabled on macOS/Windows/Linux
 # desktop builds: `cargo build -p desksync-agent --features native`.
-native = ["desksync-capture/native", "desksync-input/native"]
+native = ["desksync-capture/native", "desksync-input/native", "desksync-media/rtc"]

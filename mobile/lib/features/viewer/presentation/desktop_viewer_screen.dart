@@ -1,7 +1,8 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../app/router.dart';
@@ -348,7 +349,7 @@ class _RemoteSurface extends StatelessWidget {
         NormalizedPoint norm(Offset local) =>
             TouchMapping.normalize(local.dx, local.dy, width, height);
 
-        final renderer = controller.renderer;
+        final frames = controller.videoFrame;
 
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
@@ -365,17 +366,63 @@ class _RemoteSurface extends StatelessWidget {
               onMove(norm(d.localPosition));
             }
           },
-          child: renderer == null
+          child: frames == null
               ? const ColoredBox(color: Colors.black)
-              : RTCVideoView(
-                  renderer,
-                  objectFit:
-                      RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+              : ValueListenableBuilder<ui.Image?>(
+                  valueListenable: frames,
+                  builder: (context, image, _) {
+                    if (image == null) {
+                      return const _StatusOverlay(
+                        icon: Icons.desktop_windows,
+                        message: 'Waiting for the desktop’s screen…',
+                        busy: true,
+                      );
+                    }
+                    return SizedBox.expand(
+                      child: CustomPaint(
+                        size: Size.infinite,
+                        painter: _FramePainter(image),
+                      ),
+                    );
+                  },
                 ),
         );
       },
     );
   }
+}
+
+/// Paints a single decoded screen frame ([ui.Image]) scaled with `BoxFit.contain`.
+///
+/// This is a *borrow-only* painter: it never disposes [image]. Ownership stays
+/// with [WebRtcSession], which decodes each frame, keeps only the latest, and
+/// disposes superseded frames after they've been painted. Using a painter here
+/// (instead of `Image.memory`/`RawImage`) avoids Flutter's `ImageCache` — the
+/// source of the memory blow-up that was crashing the app under the frame
+/// stream — and avoids the double-free that `RenderImage`'s own disposal would
+/// cause against our manual disposal.
+class _FramePainter extends CustomPainter {
+  const _FramePainter(this.image);
+
+  final ui.Image image;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final imageSize =
+        Size(image.width.toDouble(), image.height.toDouble());
+    final fitted = applyBoxFit(BoxFit.contain, imageSize, size);
+    final src = Alignment.center.inscribe(fitted.source, Offset.zero & imageSize);
+    final dst = Alignment.center.inscribe(fitted.destination, Offset.zero & size);
+    canvas.drawImageRect(
+      image,
+      src,
+      dst,
+      Paint()..filterQuality = FilterQuality.low,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_FramePainter oldDelegate) => oldDelegate.image != image;
 }
 
 /// A centered status overlay with an icon, message, and optional action.

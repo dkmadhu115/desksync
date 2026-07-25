@@ -1,0 +1,85 @@
+# DeskSync — single-node k3s deployment override (VPS 200.97.163.131).
+#
+# Real secrets are NOT stored here; they are injected at install time, e.g.:
+#   helm upgrade --install desksync helm/desksync -n desksync --create-namespace \
+#     -f helm/desksync/values-vps.yaml \
+#     --set-string postgres.auth.password=$PG \
+#     --set-string secrets.data.JWT_ACCESS_SECRET=$JA \
+#     --set-string secrets.data.JWT_REFRESH_SECRET=$JR \
+#     --set-string secrets.data.SIGNALING_TICKET_SECRET=$SG \
+#     --set-string secrets.data.TURN_STATIC_AUTH_SECRET=$TN
+#
+# Images are built on the node and imported into k3s containerd (no registry),
+# so pullPolicy is Never and the ref is <repository>/<service>:<tag>.
+
+global:
+  image:
+    registry: ""
+    repository: desksync
+    tag: local
+    pullPolicy: Never
+
+# Single node: one replica per service, no HPA/PDB/topology spread.
+replicaCount: 1
+autoscaling:
+  enabled: false
+podDisruptionBudget:
+  enabled: false
+topologySpreadConstraints: []
+
+# No ingress controller / TLS on a bare IP — public services are exposed
+# directly via k3s ServiceLB (klipper) on the node IP at their service port.
+ingress:
+  enabled: false
+
+config:
+  environment: production
+  logLevel: info
+  logFormat: json
+  signalingPublicUrl: ws://200.97.163.131:8085/api/v1/signaling/ws
+  stunUrls: stun:stun.l.google.com:19302
+  turnUrls: turn:200.97.163.131:3478
+  turnRealm: desksync
+
+postgres:
+  enabled: true
+  auth:
+    username: desksync
+    # Overridden at install time via --set-string postgres.auth.password=...
+    password: change-me
+    database: desksync
+  storage:
+    size: 10Gi
+    storageClassName: local-path
+
+redis:
+  enabled: true
+
+coturn:
+  enabled: true
+  hostNetwork: true
+  externalIP: "200.97.163.131"
+
+migrations:
+  enabled: true
+  image:
+    registry: ""
+    repository: desksync
+    name: migrations
+    tag: local
+
+# Secret placeholders — overridden at install time via --set-string.
+secrets:
+  create: true
+  data:
+    JWT_ACCESS_SECRET: change-me-access-secret-min-32-bytes
+    JWT_REFRESH_SECRET: change-me-refresh-secret-min-32-bytes
+    SIGNALING_TICKET_SECRET: change-me-signaling-secret-min-32-bytes
+    TURN_STATIC_AUTH_SECRET: change-me-turn-secret
+
+# Expose gateway + signaling on the node IP (8080 / 8085) via ServiceLB.
+services:
+  gateway:
+    serviceType: LoadBalancer
+  signaling:
+    serviceType: LoadBalancer

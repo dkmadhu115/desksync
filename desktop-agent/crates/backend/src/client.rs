@@ -5,7 +5,7 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 
 use crate::error::{BackendError, Result};
-use crate::models::{Device, DeviceRegistration, PairingChallenge, TokenPair};
+use crate::models::{Device, DeviceRegistration, PairingChallenge, PendingSession, PendingSessions, TokenPair};
 
 /// The backend REST surface the agent needs to enroll and pair. Defined as a
 /// trait so the enrollment orchestration can be unit-tested against a fake
@@ -26,6 +26,10 @@ pub trait BackendApi: Send + Sync {
 
     /// Report device presence and refresh its last-seen timestamp.
     async fn heartbeat(&self, access_token: &str, device_id: &str) -> Result<()>;
+
+    /// List connecting sessions this desktop device should answer, each with a
+    /// signaling ticket + ICE configuration.
+    async fn pending_sessions(&self, access_token: &str, device_id: &str) -> Result<Vec<PendingSession>>;
 }
 
 /// A reqwest-backed [`BackendApi`] talking to the gateway base URL.
@@ -152,6 +156,13 @@ impl BackendApi for BackendClient {
                 .json(&serde_json::json!({ "status": "online" })),
         )
         .await
+    }
+
+    async fn pending_sessions(&self, access_token: &str, device_id: &str) -> Result<Vec<PendingSession>> {
+        let path = format!("/api/v1/sessions/pending?device_id={device_id}");
+        let resp: PendingSessions =
+            decode_json(self.http.get(self.url(&path)).bearer_auth(access_token)).await?;
+        Ok(resp.sessions)
     }
 }
 

@@ -9,7 +9,7 @@ metadata:
     {{- include "desksync.labels" $ | nindent 4 }}
     app.kubernetes.io/component: {{ $name }}
 spec:
-  type: ClusterIP
+  type: {{ $svc.serviceType | default "ClusterIP" }}
   selector:
     {{- include "desksync.selectorLabels" $ | nindent 4 }}
     app.kubernetes.io/component: {{ $name }}

@@ -14,17 +14,22 @@
 //! and dependency wiring live here so they are stable from the start.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{bail, Context};
 use desksync_backend::{
-    detect_device_name, detect_platform, render_qr, BackendClient, Credentials, DeviceProfile, Enrollment,
+    detect_device_name, detect_platform, render_qr, BackendApi, BackendClient, Credentials, DeviceProfile,
+    Enrollment,
 };
 use desksync_capture::{CaptureLoop, CaptureSettings, ScreenCapturer};
 use desksync_core::identity::DeviceIdentity;
 use desksync_core::subsystem::Subsystem;
 use desksync_core::{Agent, AgentConfig, AgentStore, Autostart, SingleInstance};
 use desksync_devtools::{DevToolsService, SshHost, SshHostRegistry, TokioCommandRunner, Workspace, WorkspaceRegistry};
-use desksync_input::InputInjector;
+use desksync_input::{Clipboard, InputInjector, InputRouter};
+
+#[cfg(feature = "native")]
+mod session_runtime;
 
 fn init_tracing() {
     use tracing_subscriber::{fmt, EnvFilter};
@@ -71,6 +76,16 @@ fn make_injector() -> Arc<dyn InputInjector> {
 #[cfg(not(feature = "native"))]
 fn make_injector() -> Arc<dyn InputInjector> {
     Arc::new(desksync_input::NoopInjector::new())
+}
+
+#[cfg(feature = "native")]
+fn make_clipboard() -> Arc<dyn Clipboard> {
+    Arc::new(desksync_input::clipboard::ArboardClipboard::new())
+}
+
+#[cfg(not(feature = "native"))]
+fn make_clipboard() -> Arc<dyn Clipboard> {
+    Arc::new(desksync_input::NoopClipboard::new())
 }
 
 const BACKEND_KIND: &str = if cfg!(feature = "native") { "native" } else { "noop" };
@@ -156,6 +171,74 @@ fn build_devtools(store: &AgentStore) -> DevToolsService {
     )
 }
 
+/// Spawn a background task that keeps this device marked "online" by sending
+/// periodic heartbeats to the backend. Credentials come from
+/// `DESKSYNC_EMAIL`/`DESKSYNC_PASSWORD`; the device id and REST base URL from
+/// the persisted config. If the device is not yet paired or credentials are
+/// absent, heartbeats are skipped (the device will simply show offline).
+fn spawn_heartbeat(config: &AgentConfig) {
+    let device_id = config.device_id.clone();
+    if device_id.trim().is_empty() || device_id == "unregistered" {
+        tracing::warn!("device not registered yet; skipping heartbeats (run `pair` first)");
+        return;
+    }
+    let creds = match Credentials::from_env() {
+        Ok(c) => c,
+        Err(_) => {
+            tracing::warn!(
+                "DESKSYNC_EMAIL/DESKSYNC_PASSWORD not set; skipping heartbeats (device will show offline)"
+            );
+            return;
+        }
+    };
+    let api_url = config.api_url.clone();
+    let interval = config.heartbeat_secs.max(5);
+
+    tokio::spawn(async move {
+        let client = match BackendClient::new(&api_url) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!(error = %e, "heartbeat: failed to build backend client");
+                return;
+            }
+        };
+        // Authenticate once up front; refresh/re-login on demand below.
+        let mut tokens = match client.login(&creds.email, &creds.password).await {
+            Ok(t) => {
+                tracing::info!(device_id = %device_id, "heartbeat: authenticated; reporting presence");
+                t
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "heartbeat: initial login failed");
+                return;
+            }
+        };
+
+        let mut ticker = tokio::time::interval(Duration::from_secs(interval));
+        // Send an immediate first heartbeat, then on each tick.
+        loop {
+            if client.heartbeat(&tokens.access_token, &device_id).await.is_err() {
+                // Access token likely expired: rotate the refresh token, or
+                // fall back to a full re-login, then retry once.
+                let refreshed = match client.refresh(&tokens.refresh_token).await {
+                    Ok(t) => Some(t),
+                    Err(_) => client.login(&creds.email, &creds.password).await.ok(),
+                };
+                match refreshed {
+                    Some(t) => {
+                        tokens = t;
+                        if let Err(e) = client.heartbeat(&tokens.access_token, &device_id).await {
+                            tracing::warn!(error = %e, "heartbeat failed after re-auth; will retry");
+                        }
+                    }
+                    None => tracing::warn!("heartbeat: re-authentication failed; will retry"),
+                }
+            }
+            ticker.tick().await;
+        }
+    });
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     init_tracing();
@@ -219,18 +302,65 @@ async fn main() -> anyhow::Result<()> {
         },
     ));
 
-    let subsystems: Vec<Arc<dyn Subsystem>> = vec![capturer, Arc::clone(&capture_loop) as Arc<dyn Subsystem>, injector];
+    // Input requires OS permission (Accessibility on macOS). Start it here and
+    // treat failure as non-fatal so the agent still streams (view-only) and
+    // stays online; grant the permission and restart to enable remote control.
+    match injector.start().await {
+        Ok(()) => tracing::info!("input backend ready"),
+        Err(e) => tracing::warn!(
+            error = %e,
+            "input disabled (view-only mode); grant Accessibility permission and restart to enable remote control"
+        ),
+    }
+
+    let subsystems: Vec<Arc<dyn Subsystem>> = vec![
+        Arc::clone(&capturer) as Arc<dyn Subsystem>,
+        Arc::clone(&capture_loop) as Arc<dyn Subsystem>,
+    ];
 
     // Developer quick-launch/shortcut engine. Loaded and validated at startup
     // (fail-closed on bad config) so it is ready for the control channel that
     // the native WebRTC peer wires to `DevToolsService::handle_frame`.
-    let devtools = build_devtools(&store);
+    let devtools = Arc::new(build_devtools(&store));
     tracing::info!(
         workspaces = devtools.workspaces().list().len(),
         ssh_hosts = devtools.hosts().list().len(),
         "developer tools engine ready"
     );
-    let _devtools = devtools;
+
+    // Router that dispatches inbound input frames (from the mobile) to the OS
+    // injector + clipboard. Shares the same injector started above so it uses
+    // the (possibly permission-degraded) native backend.
+    let input_router = Arc::new(InputRouter::new(Arc::clone(&injector), make_clipboard()));
+
+    // Keep the device marked "online" in the backend while the daemon runs.
+    spawn_heartbeat(&config);
+
+    // Serve incoming remote-control sessions: discover them from the backend,
+    // answer over WebRTC, stream the screen, and route input/control frames.
+    #[cfg(feature = "native")]
+    {
+        match Credentials::from_env() {
+            Ok(creds) => {
+                let manager = Arc::new(session_runtime::SessionManager::new(
+                    config.api_url.clone(),
+                    config.device_id.clone(),
+                    creds,
+                    Arc::clone(&capture_loop),
+                    Arc::clone(&input_router),
+                    Arc::clone(&devtools),
+                ));
+                tokio::spawn(manager.run());
+            }
+            Err(_) => tracing::warn!(
+                "DESKSYNC_EMAIL/DESKSYNC_PASSWORD not set; incoming remote sessions are disabled"
+            ),
+        }
+    }
+    #[cfg(not(feature = "native"))]
+    {
+        let _ = (&input_router, &devtools);
+    }
 
     let agent = Agent::new(config, subsystems);
     agent.start().await.context("failed to start agent")?;
@@ -258,6 +388,7 @@ async fn main() -> anyhow::Result<()> {
         .context("failed to listen for shutdown signal")?;
 
     agent.stop().await.context("failed to stop agent cleanly")?;
+    let _ = injector.stop().await;
     tracing::info!("agent stopped");
     Ok(())
 }

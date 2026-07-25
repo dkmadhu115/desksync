@@ -27,6 +27,9 @@ func (h *Handler) Register(r fiber.Router) {
 	g := r.Group("/sessions", middleware.RequireAuth(h.jwt))
 	g.Post("/", h.create)
 	g.Get("/", h.list)
+	// Agent-facing: discover connecting sessions to answer. Must be registered
+	// before "/:id" so "pending" is not captured as an id.
+	g.Get("/pending", h.pending)
 	g.Get("/:id", h.get)
 	g.Post("/:id/end", h.end)
 }
@@ -53,6 +56,19 @@ func (h *Handler) list(c *fiber.Ctx) error {
 		out = append(out, toSessionResponse(s))
 	}
 	return c.JSON(out)
+}
+
+func (h *Handler) pending(c *fiber.Ctx) error {
+	deviceID := c.Query("device_id")
+	pending, err := h.svc.PendingForDevice(c.Context(), middleware.UserID(c), deviceID)
+	if err != nil {
+		return respondError(c, err)
+	}
+	out := make([]sessionCreatedResponse, 0, len(pending))
+	for i := range pending {
+		out = append(out, toCreatedResponse(&pending[i]))
+	}
+	return c.JSON(fiber.Map{"sessions": out})
 }
 
 func (h *Handler) get(c *fiber.Ctx) error {
