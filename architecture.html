@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeskSync — Architecture &amp; System Design</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1420;
+    --panel: #161d2e;
+    --panel-2: #1b2437;
+    --border: #29344d;
+    --text: #dce3f0;
+    --muted: #93a0b8;
+    --accent: #5b9dff;
+    --accent-2: #4fd1a5;
+    --code-bg: #0b101a;
+    --shadow: 0 6px 24px rgba(0,0,0,.35);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: linear-gradient(180deg, #0d1220, #0f1420 40%);
+    color: var(--text);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .layout { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
+  nav {
+    position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+    background: var(--panel); border-right: 1px solid var(--border); padding: 24px 18px;
+  }
+  nav .brand { font-size: 20px; font-weight: 700; letter-spacing: .3px; margin-bottom: 4px; }
+  nav .brand span { color: var(--accent); }
+  nav .tag { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
+  nav a { display: block; color: var(--muted); text-decoration: none; padding: 6px 10px; border-radius: 8px; font-size: 14px; }
+  nav a:hover { color: var(--text); background: var(--panel-2); }
+  main { padding: 40px 56px 120px; max-width: 1080px; }
+  h1 { font-size: 30px; margin: 0 0 6px; }
+  h2 { font-size: 22px; margin: 48px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 18px; margin: 28px 0 10px; color: var(--accent-2); }
+  p { color: var(--text); }
+  .lead { color: var(--muted); font-size: 17px; max-width: 78ch; }
+  a { color: var(--accent); }
+  code { background: var(--code-bg); padding: 2px 6px; border-radius: 6px; font-size: 13.5px; font-family: "SFMono-Regular", Menlo, Consolas, monospace; }
+  pre.code { background: var(--code-bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; overflow-x: auto; font-size: 13.5px; line-height: 1.55; }
+  pre.code code { background: none; padding: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14.5px; box-shadow: var(--shadow); border-radius: 12px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--panel-2); color: var(--text); font-weight: 600; }
+  tr:nth-child(even) td { background: rgba(255,255,255,.015); }
+  td code { white-space: nowrap; }
+  .diagram { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 18px; margin: 18px 0; box-shadow: var(--shadow); }
+  .mermaid { display: flex; justify-content: center; }
+  .callout { border-left: 3px solid var(--accent); background: var(--panel-2); padding: 12px 16px; border-radius: 0 10px 10px 0; margin: 18px 0; color: var(--muted); }
+  .callout strong { color: var(--text); }
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 26px; }
+  .pill { background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); padding: 4px 12px; border-radius: 999px; font-size: 13px; }
+  footer { color: var(--muted); font-size: 13px; margin-top: 60px; border-top: 1px solid var(--border); padding-top: 18px; }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    nav { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+    main { padding: 28px 20px 80px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav>
+    <div class="brand">Desk<span>Sync</span></div>
+    <div class="tag">Architecture &amp; System Design</div>
+    <a href="#overview">1 · Overview</a>
+    <a href="#components">2 · Component diagram</a>
+    <a href="#edges">3 · The three edges</a>
+    <a href="#flows">4 · Data flows</a>
+    <a href="#deploy">5 · Deployment</a>
+    <a href="#libs">6 · Libraries &amp; uses</a>
+    <a href="#run">7 · How to run</a>
+  </nav>
+  <main>
+    <h1>DeskSync — Architecture &amp; System Design</h1>
+    <p class="lead">A secure remote desktop: control your laptop (the <em>host</em>) from your
+    phone (the <em>controller</em>) over the internet. Three edges — a Rust desktop agent, a
+    Flutter mobile app, and a Go microservices backend — tied together by WebRTC.</p>
+    <div class="pills">
+      <span class="pill">Go · Fiber · PostgreSQL · Redis</span>
+      <span class="pill">Rust · Tokio · WebRTC</span>
+      <span class="pill">Flutter · Riverpod</span>
+      <span class="pill">Coturn STUN/TURN</span>
+      <span class="pill">Kubernetes · Helm · k3s</span>
+    </div>
+
+    <h2 id="overview">1 · What DeskSync is</h2>
+    <p>DeskSync brokers identity and connection setup through a backend, but the media path is
+    peer-to-peer over WebRTC. The screen is captured on the host, JPEG-encoded, and streamed to
+    the phone over a data channel; touch/keyboard events flow back and are injected on the host.</p>
+    <table>
+      <tr><th>Principle</th><th>Meaning</th></tr>
+      <tr><td><strong>Zero-trust media</strong></td><td>The backend sets up connections but the stream is peer-to-peer; a session key can be derived end-to-end so the server can't read it.</td></tr>
+      <tr><td><strong>Fail closed</strong></td><td>No input executes while a peer is offline; sessions reconnect automatically.</td></tr>
+      <tr><td><strong>Clean architecture</strong></td><td>Domain logic sits behind interfaces — Go interfaces, Rust traits, Riverpod providers.</td></tr>
+      <tr><td><strong>Operable by default</strong></td><td>Every service exposes <code>/health</code>, <code>/ready</code>, <code>/metrics</code>, JSON logs, correlation IDs.</td></tr>
+    </table>
+
+    <h2 id="components">2 · High-level component diagram</h2>
+    <div class="diagram"><pre class="mermaid">
+flowchart TB
+    subgraph clients [Clients]
+      MOB["Flutter mobile app<br/>controller / offerer"]
+      AGENT["Rust desktop agent<br/>host / answerer"]
+    end
+    subgraph edge [Edge]
+      GW["API Gateway :8080<br/>JWT verify · rate limit · proxy"]
+      SIG["Signaling :8085<br/>WebSocket SDP/ICE relay"]
+    end
+    subgraph services [Backend microservices - Go / Fiber]
+      AUTH["auth :8081"]
+      DEV["device :8082"]
+      SESS["session :8083"]
+      PAIR["pairing :8084"]
+      RLY["relay :8086"]
+      NOTIF["notification :8087"]
+      MON["monitoring :8088"]
+    end
+    subgraph data [Stateful]
+      PG[("PostgreSQL")]
+      REDIS[("Redis")]
+      TURN["Coturn STUN/TURN :3478"]
+    end
+    MOB -->|REST + JWT| GW
+    AGENT -->|REST + JWT| GW
+    MOB -->|WSS| SIG
+    AGENT -->|WSS| SIG
+    MOB <-->|"WebRTC data channels<br/>frames / input / control"| AGENT
+    GW --> AUTH & DEV & SESS & PAIR & NOTIF
+    AUTH --> PG & REDIS
+    DEV --> PG & REDIS
+    PAIR --> PG & REDIS
+    SESS --> PG
+    SIG --> REDIS
+    SESS --> RLY --> TURN
+    MOB -. relayed media .-> TURN
+    AGENT -. relayed media .-> TURN
+    </pre></div>
+
+    <h2 id="edges">3 · The three edges in detail</h2>
+
+    <h3>3.1 Backend — Go microservices (<code>backend/</code>)</h3>
+    <p>A Go workspace (<code>go.work</code>), one module per service under <code>services/</code>,
+    shared libraries in <code>pkg/</code>. Only the <strong>gateway</strong> is public; it verifies
+    JWTs and reverse-proxies internally. <strong>Signaling</strong> is also reachable (WebSocket).</p>
+    <table>
+      <tr><th>Service</th><th>Port</th><th>Responsibility</th><th>Stores</th></tr>
+      <tr><td><strong>gateway</strong></td><td>8080</td><td>TLS ingress, JWT verification, rate limiting, reverse proxy</td><td>Redis</td></tr>
+      <tr><td><strong>auth</strong></td><td>8081</td><td>Registration, login, Google/GitHub OAuth, JWT + refresh rotation</td><td>PostgreSQL, Redis</td></tr>
+      <tr><td><strong>device</strong></td><td>8082</td><td>Device registration (public key), presence/heartbeat, revocation</td><td>PostgreSQL, Redis</td></tr>
+      <tr><td><strong>session</strong></td><td>8083</td><td>Session lifecycle, timeouts, event log, ICE config, issues signaling tickets</td><td>PostgreSQL</td></tr>
+      <tr><td><strong>pairing</strong></td><td>8084</td><td>QR + manual-code pairing, trust (codes hashed, TTL, attempt limits)</td><td>PostgreSQL, Redis</td></tr>
+      <tr><td><strong>signaling</strong></td><td>8085</td><td>WebSocket relay of SDP/ICE + presence; verifies stateless tickets</td><td>Redis</td></tr>
+      <tr><td><strong>relay</strong></td><td>8086</td><td>Issues time-limited TURN credentials (HMAC over Coturn secret)</td><td>—</td></tr>
+      <tr><td><strong>notification</strong></td><td>8087</td><td>Push (FCM) + email delivery</td><td>PostgreSQL</td></tr>
+      <tr><td><strong>monitoring</strong></td><td>8088</td><td>Health aggregation / alert hooks</td><td>—</td></tr>
+    </table>
+    <div class="callout"><strong>Cross-service coupling:</strong> <em>session</em> issues signaling
+    tickets and <em>signaling</em> verifies them via a shared <code>SIGNALING_TICKET_SECRET</code>
+    (<code>pkg/signalticket</code>). Tickets are stateless HMAC + short TTL, so signaling holds no
+    session state and scales horizontally.</div>
+
+    <h3>3.2 Desktop agent — Rust Cargo workspace (<code>desktop-agent/</code>)</h3>
+    <p>Headless Tokio daemon split into crates so platform code stays behind traits. Native backends
+    (real capture/input/WebRTC) are enabled with <code>--features native</code>.</p>
+    <table>
+      <tr><th>Crate</th><th>Role</th></tr>
+      <tr><td><code>core</code></td><td>Config, types, session-runtime primitives, shared errors</td></tr>
+      <tr><td><code>crypto</code></td><td>E2E channel — X25519 → HKDF-SHA256 → AES-256-GCM (wire-compatible with mobile)</td></tr>
+      <tr><td><code>capture</code></td><td>Screen capture behind a trait; native backend uses <code>xcap</code></td></tr>
+      <tr><td><code>input</code></td><td>Keyboard/mouse/scroll injection (<code>enigo</code>); clipboard (<code>arboard</code>)</td></tr>
+      <tr><td><code>transport</code></td><td>WebSocket signaling client (<code>tokio-tungstenite</code> + rustls)</td></tr>
+      <tr><td><code>media</code></td><td>JPEG encoder + WebRTC <strong>answerer</strong> peer; frame chunking lives here</td></tr>
+      <tr><td><code>backend</code></td><td>REST enrollment client — auth, device registration, pairing (<code>reqwest</code>)</td></tr>
+      <tr><td><code>devtools</code></td><td>Allowlisted dev shortcuts (git/docker/kubectl/helm/ssh) over the control channel</td></tr>
+      <tr><td><code>config-ui</code></td><td>The <code>desksync-agent</code> binary: wires everything, hosts session runtime, renders pairing QR</td></tr>
+    </table>
+
+    <h3>3.3 Mobile — Flutter app (<code>mobile/</code>)</h3>
+    <p>Feature-first: <code>lib/features/&lt;feature&gt;/{presentation, application, domain}</code>,
+    with <code>app/</code> (routing/theme) and <code>core/</code> (networking, storage, DI). State via
+    Riverpod, routing via GoRouter, WebRTC via flutter_webrtc. Features: <code>auth</code>,
+    <code>pairing</code> (QR scan), <code>devices</code> (presence), <code>signaling</code>,
+    <code>viewer</code> (WebRTC session + frame render + touch → input mapping).</p>
+
+    <h2 id="flows">4 · End-to-end data flows</h2>
+
+    <h3>4.1 Enrollment &amp; auth</h3>
+    <p>Agent and mobile each register a device (public key) via the gateway. Users authenticate
+    (email/password or OAuth) and receive a JWT (+ refresh). Every REST call carries the JWT.
+    The agent heartbeats the device service so the mobile sees it <strong>online</strong>.</p>
+
+    <h3>4.2 Pairing (one-time trust)</h3>
+    <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant A as Desktop Agent
+    participant G as Gateway
+    participant P as Pairing Svc
+    participant M as Mobile
+    A->>G: register device (public key)
+    M->>G: register device (public key)
+    M->>G: POST /pairing/initiate {desktop_device_id}
+    G->>P: create pairing (pending)
+    P-->>M: QR payload + manual code (hashed at rest)
+    Note over A: Agent shows QR / code
+    M->>G: POST /pairing/confirm {pairing_id, code, mobile_device_id}
+    G->>P: verify (hash compare, TTL, attempt limit)
+    P-->>G: pairing active + trusted
+    G-->>M: 200 Pairing
+    Note over A,M: Persistent trust; auto-reconnect enabled
+    </pre></div>
+
+    <h3>4.3 Session establishment (signaling + WebRTC)</h3>
+    <p>The mobile is the <strong>offerer</strong>, the agent is the <strong>answerer</strong>.
+    Signaling only brokers SDP/ICE; media is peer-to-peer.</p>
+    <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant M as Mobile (offerer)
+    participant SESS as Session Svc
+    participant SIG as Signaling (WS)
+    participant A as Agent (answerer)
+    M->>SESS: POST /sessions {desktop_device_id}
+    SESS-->>M: session_id + ticket + ICE/TURN config
+    M->>SIG: WS connect (ticket, role=controller)
+    A->>SIG: WS connect (ticket, role=agent)
+    M->>M: create RTCPeerConnection + data channels
+    M->>SIG: offer (SDP)
+    SIG->>A: offer (SDP)
+    A->>A: setRemoteDescription, create answer
+    A->>SIG: answer (SDP)
+    SIG->>M: answer (SDP)
+    par ICE trickle
+      M->>SIG: ICE candidate
+      SIG->>A: ICE candidate
+      A->>SIG: ICE candidate
+      SIG->>M: ICE candidate
+    end
+    Note over M,A: DTLS over STUN/TURN → data channels open
+    </pre></div>
+    <div class="callout"><strong>Correctness detail (fixed here):</strong> ICE candidates must not be
+    applied before the remote description, and <code>sdpMid</code> must never be null — the Android
+    <code>org.webrtc</code> build crashes otherwise. The mobile serializes signal handling, buffers
+    remote ICE until the answer is applied, and always sends a non-null <code>sdpMid</code>.</div>
+
+    <h3>4.4 Streaming pipeline (as actually implemented)</h3>
+    <p>The screen is streamed as <strong>JPEG frames over a reliable+ordered WebRTC data channel</strong>
+    (not an SRTP video track). A whole JPEG exceeds the SCTP max message size, so the agent chunks
+    each frame and the mobile reassembles.</p>
+    <div class="diagram"><pre class="mermaid">
+flowchart LR
+    CAP["Capture (xcap)<br/>BGRA frame"] --> ENC["Encode (jpeg-encoder)<br/>~720p ~20fps"]
+    ENC --> CHK["Chunk 16 KiB<br/>[frame_id][idx][count][payload]"]
+    CHK -->|"'frames' channel<br/>reliable + ordered"| RASM["Reassemble by frame_id<br/>newest wins"]
+    RASM --> DEC["Decode to ui.Image"]
+    DEC --> PNT["CustomPainter render<br/>bypasses ImageCache"]
+    PNT --> TCH["Touch / key / scroll"]
+    TCH -->|"'input' / 'control' channels"| INJ["Input injection (enigo)"]
+    </pre></div>
+    <table>
+      <tr><th>Safeguard</th><th>Why</th></tr>
+      <tr><td>Skip JPEG encode when no viewer (<code>frames_open()</code>)</td><td>Stale sessions can't CPU-starve the live one</td></tr>
+      <tr><td>Answer each session at most once</td><td>Avoids peer leave/rejoin churn that tore down calls</td></tr>
+      <tr><td>Keep only the newest decoded frame, dispose the previous</td><td>Bounded memory; no <code>ImageCache</code> blow-up / crash</td></tr>
+    </table>
+
+    <h3>4.5 Reconnect (offline → online)</h3>
+    <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant M as Mobile
+    participant SIG as Signaling
+    participant A as Agent
+    Note over M,A: Network drops on one side
+    M--xSIG: WS closed
+    Note over M: UI shows "reconnecting"; no input executes
+    loop backoff with jitter
+      M->>SIG: reconnect WS (fresh ticket)
+    end
+    A->>SIG: heartbeat (already reconnected)
+    SIG-->>M: peer_present
+    M->>SIG: renegotiate (offer/answer/ICE)
+    Note over M,A: WebRTC re-established; session resumes
+    </pre></div>
+
+    <h2 id="deploy">5 · Deployment</h2>
+    <p>Runs on Kubernetes (k3s in the live Azure environment) via an umbrella Helm chart
+    (<code>helm/desksync</code>). Only the gateway (and signaling) are exposed; Coturn uses host
+    networking with a pinned relay-port range. Values: <code>values.yaml</code> (defaults),
+    <code>values-azure.yaml</code> (live), <code>values-vps.yaml</code>.</p>
+    <div class="diagram"><pre class="mermaid">
+flowchart TB
+    subgraph internet [Internet]
+      U["Mobile / Desktop clients"]
+    end
+    subgraph k8s ["Kubernetes (k3s) — namespace: desksync"]
+      LB["LoadBalancer / ServiceLB"]
+      GWD["gateway (Deployment + HPA)"]
+      SVCD["auth · device · session · pairing · signaling · relay · notification · monitoring"]
+      PGS[("PostgreSQL StatefulSet")]
+      RDS[("Redis")]
+      TURND["Coturn (hostNetwork, relay 50000-50100)"]
+    end
+    U --> LB --> GWD --> SVCD
+    SVCD --> PGS & RDS
+    SVCD --> TURND
+    U -. TURN media .-> TURND
+    </pre></div>
+
+    <h2 id="libs">6 · Libraries and their purpose</h2>
+
+    <h3>6.1 Backend (Go)</h3>
+    <table>
+      <tr><th>Library</th><th>Used for</th></tr>
+      <tr><td><code>gofiber/fiber/v2</code></td><td>HTTP framework for every service (on top of fasthttp)</td></tr>
+      <tr><td><code>fasthttp</code></td><td>High-performance HTTP engine under Fiber</td></tr>
+      <tr><td><code>gofiber/contrib/websocket</code> + <code>fasthttp/websocket</code></td><td>WebSocket transport for signaling</td></tr>
+      <tr><td><code>golang-jwt/jwt/v5</code></td><td>Issue + verify JWT access/refresh tokens</td></tr>
+      <tr><td><code>jackc/pgx/v5</code></td><td>PostgreSQL driver + connection pool</td></tr>
+      <tr><td><code>redis/go-redis/v9</code></td><td>Rate limiting, presence, signaling pub/sub, pairing codes</td></tr>
+      <tr><td><code>golang.org/x/crypto</code></td><td>Password hashing + crypto helpers</td></tr>
+      <tr><td><code>prometheus/client_golang</code></td><td><code>/metrics</code> instrumentation</td></tr>
+      <tr><td><code>google/uuid</code></td><td>IDs for devices, sessions, pairings</td></tr>
+      <tr><td>Shared <code>pkg/</code></td><td>config, logger, httpx, observability, errors, jwtauth, signalticket</td></tr>
+    </table>
+
+    <h3>6.2 Desktop agent (Rust)</h3>
+    <table>
+      <tr><th>Crate</th><th>Used for</th></tr>
+      <tr><td><code>tokio</code></td><td>Async runtime — the whole agent is async</td></tr>
+      <tr><td><code>webrtc</code></td><td>Pure-Rust WebRTC: answerer peer, data channels, ICE/DTLS</td></tr>
+      <tr><td><code>jpeg-encoder</code></td><td>Encode captured BGRA frames to JPEG</td></tr>
+      <tr><td><code>bytes</code></td><td>Zero-copy buffers for chunked frame payloads</td></tr>
+      <tr><td><code>xcap</code> <em>(native)</em></td><td>Screen capture (macOS SCK / Windows DXGI / Linux PipeWire)</td></tr>
+      <tr><td><code>enigo</code> <em>(native)</em></td><td>Keyboard/mouse/scroll injection</td></tr>
+      <tr><td><code>arboard</code> <em>(native)</em></td><td>Clipboard sync</td></tr>
+      <tr><td><code>tokio-tungstenite</code> (+rustls)</td><td>WebSocket signaling client (pure Rust)</td></tr>
+      <tr><td><code>reqwest</code> (+rustls)</td><td>REST enrollment client</td></tr>
+      <tr><td><code>x25519-dalek</code>, <code>hkdf</code>, <code>sha2</code>, <code>aes-gcm</code>, <code>zeroize</code></td><td>E2E channel: ECDH → HKDF → AES-256-GCM, with key zeroization</td></tr>
+      <tr><td><code>qrcode</code></td><td>Render the pairing QR payload</td></tr>
+      <tr><td><code>serde</code> / <code>serde_json</code></td><td>(De)serialize signaling, config, control commands</td></tr>
+      <tr><td><code>tracing</code> / <code>tracing-subscriber</code></td><td>Structured logging + <code>frame stream stats</code> diagnostics</td></tr>
+      <tr><td><code>anyhow</code> / <code>thiserror</code></td><td>Error handling (context vs. typed errors)</td></tr>
+      <tr><td><code>dirs</code> / <code>fs4</code></td><td>Locate + file-lock the on-disk config/state</td></tr>
+    </table>
+
+    <h3>6.3 Mobile (Flutter / Dart)</h3>
+    <table>
+      <tr><th>Package</th><th>Used for</th></tr>
+      <tr><td><code>flutter_webrtc</code></td><td>Peer connection, data channels, ICE — controller/offerer</td></tr>
+      <tr><td><code>flutter_riverpod</code></td><td>State management + dependency injection</td></tr>
+      <tr><td><code>go_router</code></td><td>Declarative navigation / routing</td></tr>
+      <tr><td><code>dio</code></td><td>HTTP client for the REST API</td></tr>
+      <tr><td><code>flutter_secure_storage</code></td><td>Encrypted storage of JWT tokens + device keys</td></tr>
+      <tr><td><code>hive</code> / <code>hive_flutter</code></td><td>Local structured cache (devices, settings)</td></tr>
+      <tr><td><code>mobile_scanner</code></td><td>Scan the pairing QR with the camera</td></tr>
+      <tr><td><code>firebase_core</code> / <code>firebase_messaging</code></td><td>FCM push notifications</td></tr>
+      <tr><td><code>cryptography</code></td><td>Pure-Dart X25519/HKDF/AES-256-GCM — wire-compatible with the Rust crypto crate</td></tr>
+      <tr><td><code>crypto</code></td><td>Synchronous SHA-256 for the TLS cert-pinning callback</td></tr>
+    </table>
+
+    <h2 id="run">7 · How to run (summary)</h2>
+    <p>Full commands, endpoints, credentials location, and troubleshooting live in
+    <code>RUNBOOK.md</code>. At a glance:</p>
+    <pre class="code"><code># Backend (local dev)
+cp .env.example .env
+docker compose -f docker/docker-compose.yml up --build
+
+# Backend (Kubernetes)
+helm upgrade --install desksync ./helm/desksync -n desksync --create-namespace \
+  -f ./helm/desksync/values-azure.yaml
+
+# Desktop agent (the host / Mac being controlled)
+cd desktop-agent
+cargo build -p desksync-agent --features native
+DESKSYNC_EMAIL=... DESKSYNC_PASSWORD=... RUST_LOG=info ./target/debug/desksync-agent
+# macOS: grant Screen Recording permission to the launching app
+
+# Mobile app
+cd mobile
+flutter build apk --release --split-per-abi \
+  --dart-define=DESKSYNC_API_BASE_URL=http://&lt;host&gt;:8080 \
+  --dart-define=DESKSYNC_SIGNALING_URL=ws://&lt;host&gt;:8085/api/v1/signaling</code></pre>
+    <p><strong>Flow to connect:</strong> start backend → run agent (registers + goes online) → open
+    mobile app, log in → pair once (scan QR) → tap <strong>Connect</strong> → the phone offers, the
+    agent answers, data channels open, frames stream and touches control the desktop.</p>
+
+    <footer>
+      DeskSync architecture reference. See <code>ARCHITECTURE.md</code>, <code>RUNBOOK.md</code>,
+      <code>docs/design/</code>, and <code>docs/adr/</code> for more detail.
+    </footer>
+  </main>
+</div>
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: "dark",
+    securityLevel: "loose",
+    flowchart: { htmlLabels: true, curve: "basis" },
+    themeVariables: {
+      primaryColor: "#1b2437",
+      primaryTextColor: "#dce3f0",
+      primaryBorderColor: "#5b9dff",
+      lineColor: "#5b9dff",
+      secondaryColor: "#16324a",
+      tertiaryColor: "#122132",
+      fontSize: "14px"
+    }
+  });
+</script>
+</body>
+</html>
