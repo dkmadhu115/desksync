@@ -10,7 +10,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
+use std::time::SystemTime;
 
 use async_trait::async_trait;
 use desksync_capture::CaptureLoop;
@@ -20,7 +20,11 @@ use desksync_permissions::PermissionState;
 
 /// Shared state describing what the service is currently doing.
 pub struct ServiceState {
-    started: Instant,
+    /// Wall-clock start time, deliberately not an [`Instant`]: on macOS `Instant`
+    /// stops advancing while the machine sleeps, so a service left running
+    /// overnight under-reports its uptime by however long the lid was shut. A
+    /// diagnostic that quietly loses hours is worse than none.
+    started: SystemTime,
     signed_in: AtomicBool,
     signing_in: AtomicBool,
     device_id: RwLock<String>,
@@ -37,7 +41,7 @@ impl ServiceState {
     /// Build the state for a running service.
     pub fn new(config: &AgentConfig, capture: Arc<CaptureLoop>, log_path: Option<String>) -> Self {
         Self {
-            started: Instant::now(),
+            started: SystemTime::now(),
             signed_in: AtomicBool::new(false),
             // The service is created just before sign-in is attempted, so this
             // starts true and is cleared once the attempt resolves either way.
@@ -135,7 +139,9 @@ impl StatusSource for ServiceState {
     async fn status(&self) -> ServiceStatus {
         ServiceStatus {
             version: env!("CARGO_PKG_VERSION").to_string(),
-            uptime_secs: self.started.elapsed().as_secs(),
+            // A clock moved backwards (NTP correction, manual change) would make
+            // this negative; report 0 rather than a wildly wrong number.
+            uptime_secs: self.started.elapsed().map(|d| d.as_secs()).unwrap_or_default(),
             signed_in: self.signed_in.load(Ordering::Relaxed),
             signing_in: self.signing_in.load(Ordering::Relaxed),
             device_id: self.device_id.read().expect("device id lock poisoned").clone(),

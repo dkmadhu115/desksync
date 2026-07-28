@@ -13,7 +13,7 @@ use desksync_core::error::Result;
 use desksync_core::subsystem::{HealthStatus, Subsystem};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
@@ -84,17 +84,70 @@ impl CaptureLoop {
     /// Resolve the monitor to capture: the configured one, else the primary,
     /// else the first enumerated monitor.
     async fn resolve_monitor(&self) -> Result<String> {
-        if let Some(id) = &self.settings.monitor_id {
-            return Ok(id.clone());
+        resolve_monitor(&self.capturer, self.settings.monitor_id.as_deref()).await
+    }
+}
+
+/// Pick a monitor to capture.
+///
+/// A free function rather than a method because the capture loop needs it too: it
+/// re-resolves after a failure, and it only holds the capturer.
+async fn resolve_monitor(capturer: &Arc<dyn ScreenCapturer>, configured: Option<&str>) -> Result<String> {
+    if let Some(id) = configured {
+        return Ok(id.to_string());
+    }
+    let monitors = capturer.monitors().await?;
+    monitors
+        .iter()
+        .find(|m| m.primary)
+        .or_else(|| monitors.first())
+        .map(|m| m.id.clone())
+        .ok_or_else(|| desksync_core::error::AgentError::subsystem("capture", "no monitors available"))
+}
+
+/// How long to wait between complaints about a continuing capture failure.
+///
+/// The loop ticks up to 30 times a second, so logging every failure turns a display
+/// being asleep into thousands of identical lines that bury everything else.
+const FAILURE_LOG_INTERVAL: Duration = Duration::from_secs(30);
+
+/// How often to re-check which monitor exists while capture is failing. Frequent
+/// enough to recover promptly, rare enough not to hammer the window server.
+const RERESOLVE_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Collapses a run of identical capture failures into occasional log lines.
+struct FailureRun {
+    consecutive: u64,
+    last_logged: Option<Instant>,
+}
+
+impl FailureRun {
+    fn new() -> Self {
+        Self {
+            consecutive: 0,
+            last_logged: None,
         }
-        let monitors = self.capturer.monitors().await?;
-        let chosen = monitors
-            .iter()
-            .find(|m| m.primary)
-            .or_else(|| monitors.first())
-            .map(|m| m.id.clone())
-            .ok_or_else(|| desksync_core::error::AgentError::subsystem("capture", "no monitors available"))?;
-        Ok(chosen)
+    }
+
+    /// Record a failure, returning whether it is worth logging.
+    fn record(&mut self) -> bool {
+        self.consecutive += 1;
+        let due = match self.last_logged {
+            None => true,
+            Some(at) => at.elapsed() >= FAILURE_LOG_INTERVAL,
+        };
+        if due {
+            self.last_logged = Some(Instant::now());
+        }
+        due
+    }
+
+    /// Note a success, returning how many failures it ended (0 if none).
+    fn clear(&mut self) -> u64 {
+        let had = self.consecutive;
+        self.consecutive = 0;
+        self.last_logged = None;
+        had
     }
 }
 
@@ -124,25 +177,67 @@ impl Subsystem for CaptureLoop {
         let running = Arc::clone(&self.running);
         let period = self.period();
         let max_height = self.settings.max_height;
+        let configured = self.settings.monitor_id.clone();
 
         let handle = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(period);
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             tracing::info!(monitor = %monitor_id, ?period, "capture loop started");
 
+            let mut monitor_id = monitor_id;
+            let mut failures = FailureRun::new();
+            let mut last_reresolve: Option<Instant> = None;
+
             while running.load(Ordering::SeqCst) {
                 ticker.tick().await;
                 match capturer.capture(&monitor_id).await {
                     Ok(frame) => {
+                        let recovered = failures.clear();
+                        if recovered > 0 {
+                            tracing::info!(
+                                monitor = %monitor_id,
+                                failed_attempts = recovered,
+                                "capture recovered"
+                            );
+                        }
                         let out = downscale_to_max_height(&frame, max_height);
                         frames.fetch_add(1, Ordering::SeqCst);
                         // Coalescing send: ignore "no receivers" errors.
                         let _ = tx.send(Some(Arc::new(out)));
                     }
                     Err(e) => {
-                        // A transient capture error (e.g. display sleep) should
-                        // not kill the loop; log and retry on the next tick.
-                        tracing::warn!(error = %e, "frame capture failed; retrying");
+                        // A capture error is usually the display going away — asleep,
+                        // unplugged, or resolution changed — so the loop must survive
+                        // it rather than exit.
+                        if failures.record() {
+                            tracing::warn!(
+                                error = %e,
+                                monitor = %monitor_id,
+                                consecutive = failures.consecutive,
+                                "frame capture failing; retrying"
+                            );
+                        }
+
+                        // Crucially, also stop trusting the monitor id. macOS can hand
+                        // out a different display id after sleep or a display change,
+                        // and the old one then never becomes valid again — capture
+                        // would fail forever while the screen is perfectly available.
+                        // Skipped when the user pinned a specific monitor: honouring
+                        // that choice matters more than capturing something else.
+                        let due = last_reresolve.is_none_or(|at| at.elapsed() >= RERESOLVE_INTERVAL);
+                        if configured.is_none() && due {
+                            last_reresolve = Some(Instant::now());
+                            if let Ok(found) = resolve_monitor(&capturer, None).await {
+                                if found != monitor_id {
+                                    tracing::info!(
+                                        previous = %monitor_id,
+                                        monitor = %found,
+                                        "display changed; following it"
+                                    );
+                                    monitor_id = found;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -217,5 +312,140 @@ mod tests {
         cap_loop.start().await.unwrap();
         cap_loop.start().await.unwrap(); // no panic, no second task
         cap_loop.stop().await.unwrap();
+    }
+
+    /// A capturer whose display id changes, the way macOS renumbers displays after
+    /// sleep or a monitor change. It only serves frames for its current id.
+    struct RenumberingCapturer {
+        current: Mutex<String>,
+        rejected: AtomicU64,
+    }
+
+    impl RenumberingCapturer {
+        fn new(id: &str) -> Self {
+            Self {
+                current: Mutex::new(id.to_string()),
+                rejected: AtomicU64::new(0),
+            }
+        }
+
+        fn renumber(&self, id: &str) {
+            *self.current.lock().unwrap() = id.to_string();
+        }
+    }
+
+    #[async_trait]
+    impl Subsystem for RenumberingCapturer {
+        fn name(&self) -> &'static str {
+            "capture"
+        }
+        async fn start(&self) -> Result<()> {
+            Ok(())
+        }
+        async fn stop(&self) -> Result<()> {
+            Ok(())
+        }
+        async fn health(&self) -> HealthStatus {
+            HealthStatus::Healthy
+        }
+    }
+
+    #[async_trait]
+    impl ScreenCapturer for RenumberingCapturer {
+        async fn monitors(&self) -> Result<Vec<crate::Monitor>> {
+            Ok(vec![crate::Monitor {
+                id: self.current.lock().unwrap().clone(),
+                name: "display".into(),
+                width: 320,
+                height: 200,
+                primary: true,
+            }])
+        }
+
+        async fn capture(&self, monitor_id: &str) -> Result<Frame> {
+            if monitor_id != self.current.lock().unwrap().as_str() {
+                self.rejected.fetch_add(1, Ordering::SeqCst);
+                return Err(desksync_core::error::AgentError::subsystem(
+                    "capture",
+                    format!("monitor '{monitor_id}' not found"),
+                ));
+            }
+            Ok(Frame {
+                width: 320,
+                height: 200,
+                data: vec![0u8; 320 * 200 * 4],
+                timestamp_us: 0,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn capture_follows_a_display_that_gets_renumbered() {
+        // Observed in the wild: the display slept, its id stopped resolving, and the
+        // loop failed 320 times in a row because the id was pinned at startup. The
+        // screen was fine — only the number had changed.
+        let capturer = Arc::new(RenumberingCapturer::new("display-1"));
+        let cap_loop = CaptureLoop::new(
+            Arc::clone(&capturer) as Arc<dyn ScreenCapturer>,
+            CaptureSettings {
+                monitor_id: None,
+                target_fps: 120,
+                max_height: 200,
+            },
+        );
+
+        cap_loop.start().await.unwrap();
+        let mut rx = cap_loop.subscribe();
+        tokio::time::timeout(Duration::from_secs(2), rx.changed())
+            .await
+            .expect("a first frame")
+            .unwrap();
+        let before = cap_loop.frames_captured();
+
+        capturer.renumber("display-2");
+
+        // Re-resolution is rate limited, so allow for that interval plus slack.
+        let recovered = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if cap_loop.frames_captured() > before && capturer.rejected.load(Ordering::SeqCst) > 0 {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await;
+
+        cap_loop.stop().await.unwrap();
+        recovered.expect("capture should find the renumbered display and resume");
+    }
+
+    #[tokio::test]
+    async fn an_explicitly_chosen_monitor_is_not_silently_replaced() {
+        // Following the display is right by default and wrong when the user named
+        // one: capturing a different screen than asked for would leak whatever is on
+        // it. Better to keep failing until the chosen display returns.
+        let capturer = Arc::new(RenumberingCapturer::new("display-1"));
+        let cap_loop = CaptureLoop::new(
+            Arc::clone(&capturer) as Arc<dyn ScreenCapturer>,
+            CaptureSettings {
+                monitor_id: Some("display-1".into()),
+                target_fps: 120,
+                max_height: 200,
+            },
+        );
+
+        cap_loop.start().await.unwrap();
+        capturer.renumber("display-2");
+        let captured = cap_loop.frames_captured();
+
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let after = cap_loop.frames_captured();
+        cap_loop.stop().await.unwrap();
+
+        assert_eq!(after, captured, "must not capture a monitor the user did not choose");
+        assert!(
+            capturer.rejected.load(Ordering::SeqCst) > 0,
+            "it should have kept trying the requested display"
+        );
     }
 }
