@@ -52,13 +52,18 @@ func TestLoadJWTDefaultsAndOverrides(t *testing.T) {
 	t.Setenv("JWT_ACCESS_SECRET", "")
 	t.Setenv("JWT_REFRESH_SECRET", "")
 	t.Setenv("JWT_ACCESS_TTL", "")
+	t.Setenv("JWT_REFRESH_REUSE_GRACE", "")
 	t.Setenv("JWT_ISSUER", "")
 	def := LoadJWT()
-	if def.AccessTTL != 15*time.Minute {
-		t.Fatalf("default AccessTTL = %v, want 15m", def.AccessTTL)
+	if def.AccessTTL != time.Hour {
+		t.Fatalf("default AccessTTL = %v, want 1h", def.AccessTTL)
 	}
+	// How long a client stays signed in without re-authenticating.
 	if def.RefreshTTL != 720*time.Hour {
 		t.Fatalf("default RefreshTTL = %v, want 720h", def.RefreshTTL)
+	}
+	if def.ReuseGrace != time.Minute {
+		t.Fatalf("default ReuseGrace = %v, want 1m", def.ReuseGrace)
 	}
 	if def.Issuer != "desksync" {
 		t.Fatalf("default Issuer = %q, want desksync", def.Issuer)

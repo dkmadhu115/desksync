@@ -25,8 +25,16 @@ config:
   logLevel: info
   logFormat: json
   jwtIssuer: desksync
-  jwtAccessTtl: 15m
+  # A client stays signed in for jwtRefreshTtl, silently exchanging its refresh
+  # token whenever the short-lived access token runs out. jwtAccessTtl therefore
+  # bounds how long a revoked account keeps access, not how long a user stays
+  # logged in.
+  jwtAccessTtl: 1h
   jwtRefreshTtl: 720h
+  # Grace period in which a refresh token that was just rotated is still
+  # accepted, so a client whose rotation response was lost can retry instead of
+  # being logged out as a suspected thief.
+  jwtRefreshReuseGrace: 1m
   signalingTicketTtl: 2m
   # Externally reachable signaling WebSocket URL returned to clients.
   signalingPublicUrl: wss://api.desksync.example.com/api/v1/signaling/ws

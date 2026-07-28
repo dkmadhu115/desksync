@@ -67,6 +67,7 @@ func main() {
 		JWT:        jwtManager,
 		Argon:      crypto.DefaultArgon2Params(),
 		RefreshTTL: jwtCfg.RefreshTTL,
+		ReuseGrace: jwtCfg.ReuseGrace,
 	})
 	handler := transport.New(transport.Config{
 		Service:       svc,

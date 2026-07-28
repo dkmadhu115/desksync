@@ -86,6 +86,16 @@ func (f *fakeRefresh) Revoke(_ context.Context, jti string, replacedBy *string) 
 	f.byID[jti] = t
 	return nil
 }
+func (f *fakeRefresh) RevokeFamily(_ context.Context, familyID string) error {
+	now := time.Now()
+	for jti, t := range f.byID {
+		if t.FamilyID == familyID && t.RevokedAt == nil {
+			t.RevokedAt = &now
+			f.byID[jti] = t
+		}
+	}
+	return nil
+}
 func (f *fakeRefresh) RevokeAllForUser(_ context.Context, userID string) error {
 	now := time.Now()
 	for jti, t := range f.byID {
@@ -136,7 +146,7 @@ func newTestEnv(t *testing.T, desktops *fakeDesktops) testEnv {
 	jwtMgr, err := jwtauth.NewManager(config.JWTConfig{
 		AccessSecret:  "0123456789abcdef0123456789abcdef",
 		RefreshSecret: "abcdef0123456789abcdef0123456789",
-		AccessTTL:     15 * time.Minute,
+		AccessTTL:     time.Hour,
 		RefreshTTL:    720 * time.Hour,
 		Issuer:        "desksync-test",
 	})
@@ -155,6 +165,7 @@ func newTestEnv(t *testing.T, desktops *fakeDesktops) testEnv {
 		JWT:        jwtMgr,
 		Argon:      argon,
 		RefreshTTL: 720 * time.Hour,
+		ReuseGrace: time.Minute,
 	})
 	cfg := Config{
 		Service: svc,

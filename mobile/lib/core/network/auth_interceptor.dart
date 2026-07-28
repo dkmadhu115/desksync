@@ -14,8 +14,11 @@ import '../storage/secure_storage.dart';
 ///   the stored token has already been rotated by another in-flight refresh and
 ///   simply retry with the new token, only performing a real refresh when the
 ///   token is genuinely stale. A single in-flight refresh future is shared.
-/// - On refresh failure the session is considered expired: tokens are cleared
-///   and [onSessionExpired] is invoked so the app can route back to login.
+/// - Only a refresh the backend actually *refuses* ends the session. A refresh
+///   that could not be delivered (no connectivity, timeout, server error) leaves
+///   the stored tokens alone: a refresh token is valid for weeks, so throwing it
+///   away over a dropped request would sign the user out every time they walked
+///   through a tunnel.
 class AuthInterceptor extends QueuedInterceptor {
   /// Creates the interceptor.
   AuthInterceptor({
@@ -37,7 +40,7 @@ class AuthInterceptor extends QueuedInterceptor {
   static const _retriedKey = '__auth_retried__';
   static const _usedTokenKey = '__auth_used_token__';
 
-  Future<bool>? _inFlightRefresh;
+  Future<_RefreshOutcome>? _inFlightRefresh;
 
   bool _isPublicAuthPath(String path) {
     return path.contains('/auth/login') ||
@@ -83,12 +86,20 @@ class AuthInterceptor extends QueuedInterceptor {
     final tokenAlreadyRotated =
         current != null && current.isNotEmpty && current != used;
 
-    final refreshed = tokenAlreadyRotated ? true : await _refresh();
-    if (!refreshed) {
-      await store.delete(StorageKeys.accessToken);
-      await store.delete(StorageKeys.refreshToken);
-      onSessionExpired();
-      return handler.next(err);
+    final outcome =
+        tokenAlreadyRotated ? _RefreshOutcome.renewed : await _refresh();
+    switch (outcome) {
+      case _RefreshOutcome.refused:
+        await store.delete(StorageKeys.accessToken);
+        await store.delete(StorageKeys.refreshToken);
+        onSessionExpired();
+        return handler.next(err);
+      case _RefreshOutcome.undelivered:
+        // The credentials are probably fine; this request is not. Fail it and
+        // let the next one try again with the session intact.
+        return handler.next(err);
+      case _RefreshOutcome.renewed:
+        break;
     }
 
     try {
@@ -105,31 +116,52 @@ class AuthInterceptor extends QueuedInterceptor {
 
   /// Refresh the token pair, sharing a single in-flight future so concurrent
   /// callers don't issue multiple refreshes.
-  Future<bool> _refresh() {
+  Future<_RefreshOutcome> _refresh() {
     return _inFlightRefresh ??=
         _doRefresh().whenComplete(() => _inFlightRefresh = null);
   }
 
-  Future<bool> _doRefresh() async {
+  Future<_RefreshOutcome> _doRefresh() async {
     final refreshToken = await store.read(StorageKeys.refreshToken);
-    if (refreshToken == null || refreshToken.isEmpty) return false;
+    if (refreshToken == null || refreshToken.isEmpty) {
+      return _RefreshOutcome.refused;
+    }
     try {
       final resp = await refreshDio.post<Map<String, dynamic>>(
         '/api/v1/auth/refresh',
         data: {'refresh_token': refreshToken},
       );
-      final data = resp.data;
-      if (data == null) return false;
-      final access = data['access_token'] as String?;
-      final refresh = data['refresh_token'] as String?;
-      if (access == null || access.isEmpty) return false;
+      final access = resp.data?['access_token'] as String?;
+      final refresh = resp.data?['refresh_token'] as String?;
+      if (access == null || access.isEmpty) {
+        // A 2xx without a token is a backend fault, not a dead session.
+        return _RefreshOutcome.undelivered;
+      }
       await store.write(StorageKeys.accessToken, access);
       if (refresh != null && refresh.isNotEmpty) {
         await store.write(StorageKeys.refreshToken, refresh);
       }
-      return true;
-    } on DioException {
-      return false;
+      return _RefreshOutcome.renewed;
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      // Only the backend rejecting the token means the user must sign in again.
+      // Anything else — offline, timeout, 5xx, proxy error — is temporary.
+      final rejected = status == 400 || status == 401 || status == 403;
+      return rejected
+          ? _RefreshOutcome.refused
+          : _RefreshOutcome.undelivered;
     }
   }
+}
+
+/// What came of a refresh attempt.
+enum _RefreshOutcome {
+  /// A new pair was stored.
+  renewed,
+
+  /// The backend rejected the refresh token: the user must sign in again.
+  refused,
+
+  /// The attempt never got an answer, so the session is still presumed good.
+  undelivered,
 }

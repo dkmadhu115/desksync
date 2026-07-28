@@ -7,13 +7,20 @@
 //! [`AuthSession::pending_sessions`], …) that just work.
 //!
 //! Token lifecycle:
-//! 1. Try the request with the current access token.
-//! 2. On `401`, rotate the refresh token for a new pair and retry **once**.
-//! 3. If rotation fails, adopt a pair another process has stored since, then fall
+//! 1. Rotate ahead of time if the access token is about to expire, so requests
+//!    are not sent with a token that dies in flight.
+//! 2. Try the request with the current access token.
+//! 3. On `401`, rotate the refresh token for a new pair and retry **once**.
+//! 4. If rotation fails, adopt a pair another process has stored since, then fall
 //!    back to password credentials when they were supplied — that path exists for
 //!    CI and headless boxes; interactive users re-run `desksync-agent login`.
-//! 4. Whenever the pair changes, hand it to the [`TokenSink`] so a restart does
+//! 5. Whenever the pair changes, hand it to the [`TokenSink`] so a restart does
 //!    not require re-authentication.
+//!
+//! The refresh token is good for weeks (`JWT_REFRESH_TTL`, 30 days by default),
+//! so a signed-in agent stays signed in across restarts, sleep and expiry without
+//! anyone touching it. Sign-in is only required again if the backend refuses the
+//! refresh token outright.
 //!
 //! **A refresh token must never be presented twice.** The backend rotates refresh
 //! tokens and treats a repeat as evidence of theft, revoking every token the user
@@ -31,12 +38,30 @@ use std::collections::HashSet;
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use tokio::sync::{Mutex, RwLock};
 
 use crate::client::BackendApi;
 use crate::error::{BackendError, Result};
 use crate::models::{Device, DeviceRegistration, PairingChallenge, PendingSession, TokenPair};
+
+/// How long before an access token expires it is rotated anyway.
+///
+/// Waiting for the `401` also works, but it spends a round trip on a request that
+/// was always going to fail, and — since every long-lived task shares one pair —
+/// turns a single expiry into a burst of simultaneous failures. The margin also
+/// covers a request that is still in flight when the token runs out.
+const REFRESH_MARGIN: Duration = Duration::from_secs(60);
+
+/// How long to wait before trying again after an authentication attempt that had
+/// nothing left to try.
+///
+/// The heartbeat loop ticks every few seconds forever. Without this, a session
+/// that genuinely needs a new sign-in produces a request storm and a wall of
+/// identical warnings. Retrying on a slow cadence instead still recovers on its
+/// own once `desksync-agent login` puts fresh credentials in the shared store.
+const REAUTH_BACKOFF: Duration = Duration::from_secs(60);
 
 /// Password credentials for a DeskSync account.
 ///
@@ -89,10 +114,34 @@ pub trait TokenSink: Send + Sync {
     }
 }
 
+/// The current token pair together with when its access token stops working.
+struct Live {
+    tokens: TokenPair,
+    /// `None` when the lifetime is unknown, which is the case for a pair restored
+    /// from the credential store: it records the tokens but not their age. Those
+    /// fall back to reacting to a `401`.
+    expires_at: Option<Instant>,
+}
+
+impl Live {
+    fn new(tokens: TokenPair) -> Self {
+        let expires_at =
+            (tokens.expires_in > 0).then(|| Instant::now() + Duration::from_secs(tokens.expires_in.max(0) as u64));
+        Self { tokens, expires_at }
+    }
+
+    /// Whether the access token is expired, or close enough that it should be
+    /// replaced before being used again.
+    fn stale(&self) -> bool {
+        self.expires_at
+            .is_some_and(|at| at.saturating_duration_since(Instant::now()) <= REFRESH_MARGIN)
+    }
+}
+
 /// An authenticated view of the backend for one account/device.
 pub struct AuthSession {
     api: Arc<dyn BackendApi>,
-    tokens: RwLock<TokenPair>,
+    tokens: RwLock<Live>,
     sink: Option<Arc<dyn TokenSink>>,
     fallback: Option<Credentials>,
     /// Held for the duration of a rotation so only one is ever in flight.
@@ -104,6 +153,9 @@ pub struct AuthSession {
     /// Refresh tokens the backend has already refused. Re-sending one is what
     /// reuse detection punishes, so they are never presented again.
     rejected: RwLock<HashSet<String>>,
+    /// When authentication has run out of options, the instant it is worth trying
+    /// again. Until then every call fails immediately with the same explanation.
+    blocked_until: RwLock<Option<Instant>>,
 }
 
 impl AuthSession {
@@ -117,12 +169,13 @@ impl AuthSession {
     ) -> Self {
         Self {
             api,
-            tokens: RwLock::new(tokens),
+            tokens: RwLock::new(Live::new(tokens)),
             sink,
             fallback,
             rotating: Mutex::new(()),
             generation: AtomicU64::new(0),
             rejected: RwLock::new(HashSet::new()),
+            blocked_until: RwLock::new(None),
         }
     }
 
@@ -138,12 +191,12 @@ impl AuthSession {
     /// The current access token. Prefer the domain methods, which also handle
     /// expiry; this exists for callers that must pass a bearer token onward.
     pub async fn access_token(&self) -> String {
-        self.tokens.read().await.access_token.clone()
+        self.tokens.read().await.tokens.access_token.clone()
     }
 
     /// The current refresh token, for persisting alongside other agent state.
     pub async fn refresh_token(&self) -> String {
-        self.tokens.read().await.refresh_token.clone()
+        self.tokens.read().await.tokens.refresh_token.clone()
     }
 
     /// Report presence for a device.
@@ -201,6 +254,15 @@ impl AuthSession {
         F: Fn(String) -> Fut,
         Fut: Future<Output = Result<T>>,
     {
+        if self.tokens.read().await.stale() {
+            // Not fatal if it fails: the token in hand may still have seconds of
+            // life left, and the retry below covers it if it does not.
+            let generation = self.generation.load(Ordering::Acquire);
+            if let Err(e) = self.rotate(generation).await {
+                tracing::debug!(error = %e, "could not rotate ahead of expiry; trying the current token");
+            }
+        }
+
         // Capture which token generation this attempt used, so that if it fails we
         // can tell "my token is stale" from "someone already replaced it".
         let generation = self.generation.load(Ordering::Acquire);
@@ -233,7 +295,17 @@ impl AuthSession {
     /// Obtain a fresh token pair, in order of least disruption: rotate the refresh
     /// token; adopt a pair another process has stored since; or fall back to
     /// password credentials when one was supplied.
+    ///
+    /// Once every option has been exhausted the answer is cached for
+    /// [`REAUTH_BACKOFF`], so a caller on a timer gets the same explanation
+    /// without the backend being asked again on every tick.
     pub async fn reauthenticate(&self) -> Result<()> {
+        if let Some(until) = *self.blocked_until.read().await {
+            if Instant::now() < until {
+                return Err(sign_in_required());
+            }
+        }
+
         let refresh = self.refresh_token().await;
         let rotated = match self.try_refresh(&refresh).await {
             Some(pair) => Some(pair),
@@ -246,13 +318,13 @@ impl AuthSession {
             },
         };
         let Some(pair) = rotated else {
-            return Err(BackendError::Invalid(
-                "session expired; run `desksync-agent login` to sign in again".into(),
-            ));
+            *self.blocked_until.write().await = Some(Instant::now() + REAUTH_BACKOFF);
+            return Err(sign_in_required());
         };
 
-        *self.tokens.write().await = pair;
+        *self.tokens.write().await = Live::new(pair);
         self.generation.fetch_add(1, Ordering::Release);
+        *self.blocked_until.write().await = None;
         self.persist().await;
         tracing::info!("rotated backend credentials");
         Ok(())
@@ -332,8 +404,8 @@ impl AuthSession {
     /// propagated: the in-memory session is still usable.
     async fn persist(&self) {
         let Some(sink) = &self.sink else { return };
-        let tokens = self.tokens.read().await;
-        if let Err(e) = sink.persist(&tokens) {
+        let live = self.tokens.read().await;
+        if let Err(e) = sink.persist(&live.tokens) {
             tracing::warn!(error = %e, "failed to persist rotated credentials");
         }
     }
@@ -342,6 +414,12 @@ impl AuthSession {
 /// Whether an error means "the access token is no longer accepted".
 fn is_unauthorized(e: &BackendError) -> bool {
     matches!(e, BackendError::Api { status: 401, .. })
+}
+
+/// The one error that asks the user to do something, phrased as the action they
+/// need to take.
+fn sign_in_required() -> BackendError {
+    BackendError::Invalid("session expired; run `desksync-agent login` to sign in again".into())
 }
 
 #[cfg(test)]
@@ -560,6 +638,64 @@ mod tests {
             api.refreshes.load(Ordering::SeqCst),
             1,
             "one rejection is enough; further attempts must not re-send it"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_token_near_expiry_is_rotated_before_it_is_used() {
+        // The pair on hand is about to expire, and the backend has already stopped
+        // accepting it. Rotating first means the request never 401s at all.
+        let api = Arc::new(FakeApi::new("access-2"));
+        let mut expiring = pair(1);
+        expiring.expires_in = 5;
+        let session = AuthSession::new(Arc::clone(&api) as Arc<dyn BackendApi>, expiring, None, None);
+
+        session.heartbeat("dev").await.expect("should rotate, then succeed");
+
+        assert_eq!(api.refreshes.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            api.heartbeats.load(Ordering::SeqCst),
+            1,
+            "rotating first means no wasted attempt with the expiring token"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_lifetime_does_not_trigger_a_rotation() {
+        // Pairs restored from the credential store carry no lifetime. Treating
+        // that as "expired" would burn a rotation on every start.
+        let api = Arc::new(FakeApi::new("access-1"));
+        let mut unknown = pair(1);
+        unknown.expires_in = 0;
+        let session = AuthSession::new(Arc::clone(&api) as Arc<dyn BackendApi>, unknown, None, None);
+
+        session.heartbeat("dev").await.unwrap();
+        assert_eq!(api.refreshes.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_session_needing_sign_in_is_reported_without_retrying_each_call() {
+        // What the user saw: a heartbeat every few seconds, each one re-reporting
+        // "session expired". The answer is settled, so repeat it from memory.
+        let mut fake = FakeApi::new("never-accepted");
+        fake.refresh_fails = true;
+        let api = Arc::new(fake);
+        let session = AuthSession::new(Arc::clone(&api) as Arc<dyn BackendApi>, pair(1), None, None);
+
+        for _ in 0..20 {
+            let err = session.heartbeat("dev").await.expect_err("no way back in");
+            assert!(err.to_string().contains("login"), "got: {err}");
+        }
+
+        assert_eq!(
+            api.refreshes.load(Ordering::SeqCst),
+            1,
+            "the backend is asked once, not once per tick"
+        );
+        assert_eq!(
+            api.heartbeats.load(Ordering::SeqCst),
+            20,
+            "each call still reports its own failure"
         );
     }
 

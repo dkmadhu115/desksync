@@ -27,7 +27,11 @@ type RefreshTokenRepository interface {
 	GetByID(ctx context.Context, jti string) (RefreshToken, error)
 	// Revoke marks a token revoked and records the successor JTI.
 	Revoke(ctx context.Context, jti string, replacedBy *string) error
-	// RevokeAllForUser revokes every active token for a user (theft response,
-	// logout-all, revocation).
+	// RevokeFamily revokes every active token descended from one sign-in: the
+	// theft response, scoped so it ends a single session rather than signing the
+	// account out on every device.
+	RevokeFamily(ctx context.Context, familyID string) error
+	// RevokeAllForUser revokes every active token for a user, across all
+	// devices — account-level revocation.
 	RevokeAllForUser(ctx context.Context, userID string) error
 }

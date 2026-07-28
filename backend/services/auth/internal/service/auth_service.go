@@ -32,12 +32,13 @@ type Metadata struct {
 
 // Service holds dependencies for the auth use cases.
 type Service struct {
-	users    domain.UserRepository
-	refresh  domain.RefreshTokenRepository
-	jwt      *jwtauth.Manager
-	argon    crypto.Argon2Params
-	now      func() time.Time
-	refreshT time.Duration
+	users      domain.UserRepository
+	refresh    domain.RefreshTokenRepository
+	jwt        *jwtauth.Manager
+	argon      crypto.Argon2Params
+	now        func() time.Time
+	refreshT   time.Duration
+	reuseGrace time.Duration
 }
 
 // Config configures a Service.
@@ -47,17 +48,21 @@ type Config struct {
 	JWT        *jwtauth.Manager
 	Argon      crypto.Argon2Params
 	RefreshTTL time.Duration
+	// ReuseGrace is how long after a rotation the spent token may be presented
+	// again and still be honoured. See [Service.Refresh].
+	ReuseGrace time.Duration
 }
 
 // New builds a Service.
 func New(c Config) *Service {
 	return &Service{
-		users:    c.Users,
-		refresh:  c.Refresh,
-		jwt:      c.JWT,
-		argon:    c.Argon,
-		now:      time.Now,
-		refreshT: c.RefreshTTL,
+		users:      c.Users,
+		refresh:    c.Refresh,
+		jwt:        c.JWT,
+		argon:      c.Argon,
+		now:        time.Now,
+		refreshT:   c.RefreshTTL,
+		reuseGrace: c.ReuseGrace,
 	}
 }
 
@@ -118,8 +123,20 @@ func (s *Service) Login(ctx context.Context, email, password string, md Metadata
 }
 
 // Refresh rotates a refresh token: it validates the token, revokes it, and
-// issues a new pair. Reuse of an already-revoked token triggers revocation of
-// the whole family (theft detection).
+// issues a new pair.
+//
+// Presenting an already-spent token is normally evidence of theft, and the
+// response is to revoke its family — the chain descended from one sign-in, i.e.
+// that one device's session. Other devices on the account are unaffected, so a
+// phone with a stale token cannot sign a desktop out.
+//
+// One benign case looks identical to theft and is tolerated: if the response to
+// a rotation never reaches the client (a dropped connection, a timeout), the
+// client still holds the token the server just spent and will retry with it.
+// Within ReuseGrace of the rotation, and only while the successor is still
+// unused, that retry is answered with a fresh pair instead of ending the
+// session. A successor that has been used proves the client did get the
+// response, so a token presented after that is treated as a replay.
 func (s *Service) Refresh(ctx context.Context, refreshToken string, md Metadata) (Tokens, error) {
 	claims, err := s.jwt.VerifyRefresh(refreshToken)
 	if err != nil {
@@ -130,31 +147,57 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string, md Metadata)
 	if err != nil {
 		return Tokens{}, apperr.New(apperr.CodeUnauthorized, "invalid refresh token")
 	}
-
-	// Reuse detection: a token that exists but is already revoked means the
-	// chain may be compromised — revoke everything for the user.
-	if stored.RevokedAt != nil {
-		_ = s.refresh.RevokeAllForUser(ctx, stored.UserID)
-		return Tokens{}, apperr.New(apperr.CodeUnauthorized, "refresh token reuse detected")
-	}
-	if !crypto.EqualTokenHash(refreshToken, stored.TokenHash) || !stored.Active(s.now()) {
+	if !crypto.EqualTokenHash(refreshToken, stored.TokenHash) {
 		return Tokens{}, apperr.New(apperr.CodeUnauthorized, "invalid refresh token")
 	}
 
-	user, err := s.users.GetUserByID(ctx, stored.UserID)
+	// The token to spend is normally the one presented; for a retried rotation it
+	// is the successor the client never received.
+	rotating := stored
+	if stored.RevokedAt != nil {
+		successor, ok := s.retriedRotation(ctx, stored)
+		if !ok {
+			_ = s.refresh.RevokeFamily(ctx, stored.FamilyID)
+			return Tokens{}, apperr.New(apperr.CodeUnauthorized, "refresh token reuse detected")
+		}
+		rotating = successor
+	}
+	if !rotating.Active(s.now()) {
+		return Tokens{}, apperr.New(apperr.CodeUnauthorized, "invalid refresh token")
+	}
+
+	user, err := s.users.GetUserByID(ctx, rotating.UserID)
 	if err != nil {
 		return Tokens{}, apperr.New(apperr.CodeUnauthorized, "invalid refresh token")
 	}
 
-	tokens, newJTI, err := s.mint(ctx, user, md)
+	tokens, newJTI, err := s.mint(ctx, user, rotating.FamilyID, md)
 	if err != nil {
 		return Tokens{}, err
 	}
 	// Revoke the old token, chaining it to the new one.
-	if err := s.refresh.Revoke(ctx, stored.ID, &newJTI); err != nil {
+	if err := s.refresh.Revoke(ctx, rotating.ID, &newJTI); err != nil {
 		return Tokens{}, apperr.Wrap(apperr.CodeInternal, "failed to rotate token", err)
 	}
 	return tokens, nil
+}
+
+// retriedRotation reports the token to spend when an already-revoked token is
+// presented, for the one case where that is a client retry rather than theft:
+// the rotation happened moments ago and its successor has never been used, so
+// the client cannot have received it.
+func (s *Service) retriedRotation(ctx context.Context, spent domain.RefreshToken) (domain.RefreshToken, bool) {
+	if s.reuseGrace <= 0 || spent.RevokedAt == nil || spent.ReplacedBy == nil {
+		return domain.RefreshToken{}, false
+	}
+	if s.now().Sub(*spent.RevokedAt) > s.reuseGrace {
+		return domain.RefreshToken{}, false
+	}
+	successor, err := s.refresh.GetByID(ctx, *spent.ReplacedBy)
+	if err != nil || !successor.Active(s.now()) {
+		return domain.RefreshToken{}, false
+	}
+	return successor, true
 }
 
 // Logout revokes the presented refresh token (best-effort on invalid input).
@@ -240,25 +283,31 @@ func (s *Service) IssueForUserID(ctx context.Context, userID string, md Metadata
 	return s.issueTokens(ctx, user, md)
 }
 
-// issueTokens mints and persists a fresh pair for a user.
+// issueTokens mints and persists a fresh pair for a user, starting a new token
+// family: this is a sign-in, so it is a session of its own.
 func (s *Service) issueTokens(ctx context.Context, user domain.User, md Metadata) (Tokens, error) {
-	tokens, _, err := s.mint(ctx, user, md)
+	tokens, _, err := s.mint(ctx, user, "", md)
 	return tokens, err
 }
 
 // mint creates a token pair, persists the hashed refresh token, and returns the
-// new refresh JTI.
-func (s *Service) mint(ctx context.Context, user domain.User, md Metadata) (Tokens, string, error) {
+// new refresh JTI. An empty familyID starts a new family; a rotation passes the
+// family it continues.
+func (s *Service) mint(ctx context.Context, user domain.User, familyID string, md Metadata) (Tokens, string, error) {
 	jti := uuid.NewString()
 	pair, err := s.jwt.Issue(user.ID, jti)
 	if err != nil {
 		return Tokens{}, "", apperr.Wrap(apperr.CodeInternal, "failed to issue tokens", err)
+	}
+	if familyID == "" {
+		familyID = jti
 	}
 
 	now := s.now()
 	if err := s.refresh.Create(ctx, domain.RefreshToken{
 		ID:        jti,
 		UserID:    user.ID,
+		FamilyID:  familyID,
 		TokenHash: crypto.HashToken(pair.RefreshToken),
 		IssuedAt:  now,
 		ExpiresAt: now.Add(s.refreshT),

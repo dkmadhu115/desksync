@@ -149,6 +149,14 @@ rendering + touch → input mapping).
 3. The agent stores its `device_id` + tokens and sends periodic **heartbeats**
    (device service) so the mobile sees it **online**.
 
+Sessions are long-lived and self-maintaining: the access token expires in an hour
+(`JWT_ACCESS_TTL`) and clients rotate it silently, so a sign-in lasts until the
+refresh token expires (`JWT_REFRESH_TTL`, 30 days). Each sign-in starts a **token
+family** and rotations stay inside it, so responding to a stolen token ends that
+one session and leaves the account's other devices alone. Within
+`JWT_REFRESH_REUSE_GRACE` a spent token may be presented again — that is a client
+retrying a rotation whose response it never received, not a thief.
+
 ### 4.2 Pairing (one-time trust)
 
 ```mermaid

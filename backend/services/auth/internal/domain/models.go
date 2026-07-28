@@ -58,8 +58,11 @@ type DesktopGrant struct {
 
 // RefreshToken is a persisted (hashed) refresh token in a rotation chain.
 type RefreshToken struct {
-	ID         string // JTI
-	UserID     string
+	ID     string // JTI
+	UserID string
+	// FamilyID groups every token descended from one sign-in. Revoking a family
+	// ends that one session; other devices on the account keep working.
+	FamilyID   string
 	TokenHash  string
 	IssuedAt   time.Time
 	ExpiresAt  time.Time

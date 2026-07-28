@@ -99,9 +99,9 @@ func NewRefreshRepo(pool *pgxpool.Pool) *RefreshRepo { return &RefreshRepo{pool:
 // Create stores a new (hashed) refresh token.
 func (r *RefreshRepo) Create(ctx context.Context, t domain.RefreshToken) error {
 	const q = `
-		INSERT INTO refresh_tokens (id, user_id, token_hash, issued_at, expires_at, user_agent, ip_address)
-		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, '')::inet)`
-	if _, err := r.pool.Exec(ctx, q, t.ID, t.UserID, t.TokenHash, t.IssuedAt, t.ExpiresAt, t.UserAgent, t.IPAddress); err != nil {
+		INSERT INTO refresh_tokens (id, user_id, family_id, token_hash, issued_at, expires_at, user_agent, ip_address)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::inet)`
+	if _, err := r.pool.Exec(ctx, q, t.ID, t.UserID, t.FamilyID, t.TokenHash, t.IssuedAt, t.ExpiresAt, t.UserAgent, t.IPAddress); err != nil {
 		return fmt.Errorf("create refresh token: %w", err)
 	}
 	return nil
@@ -110,12 +110,12 @@ func (r *RefreshRepo) Create(ctx context.Context, t domain.RefreshToken) error {
 // GetByID fetches a refresh token by JTI.
 func (r *RefreshRepo) GetByID(ctx context.Context, jti string) (domain.RefreshToken, error) {
 	const q = `
-		SELECT id, user_id, token_hash, issued_at, expires_at, revoked_at, replaced_by,
+		SELECT id, user_id, family_id, token_hash, issued_at, expires_at, revoked_at, replaced_by,
 		       COALESCE(user_agent, ''), COALESCE(host(ip_address), '')
 		FROM refresh_tokens WHERE id = $1`
 	var t domain.RefreshToken
 	err := r.pool.QueryRow(ctx, q, jti).Scan(
-		&t.ID, &t.UserID, &t.TokenHash, &t.IssuedAt, &t.ExpiresAt,
+		&t.ID, &t.UserID, &t.FamilyID, &t.TokenHash, &t.IssuedAt, &t.ExpiresAt,
 		&t.RevokedAt, &t.ReplacedBy, &t.UserAgent, &t.IPAddress,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -146,6 +146,15 @@ func (r *RefreshRepo) Revoke(ctx context.Context, jti string, replacedBy *string
 		if !exists {
 			return domain.ErrRefreshNotFound
 		}
+	}
+	return nil
+}
+
+// RevokeFamily revokes every active token descended from one sign-in.
+func (r *RefreshRepo) RevokeFamily(ctx context.Context, familyID string) error {
+	const q = `UPDATE refresh_tokens SET revoked_at = now() WHERE family_id = $1 AND revoked_at IS NULL`
+	if _, err := r.pool.Exec(ctx, q, familyID); err != nil {
+		return fmt.Errorf("revoke refresh token family: %w", err)
 	}
 	return nil
 }

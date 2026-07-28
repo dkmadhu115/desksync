@@ -11,6 +11,7 @@ data:
   JWT_ISSUER: {{ .Values.config.jwtIssuer | quote }}
   JWT_ACCESS_TTL: {{ .Values.config.jwtAccessTtl | quote }}
   JWT_REFRESH_TTL: {{ .Values.config.jwtRefreshTtl | quote }}
+  JWT_REFRESH_REUSE_GRACE: {{ .Values.config.jwtRefreshReuseGrace | quote }}
   SIGNALING_TICKET_TTL: {{ .Values.config.signalingTicketTtl | quote }}
   SIGNALING_PUBLIC_URL: {{ .Values.config.signalingPublicUrl | quote }}
   TURN_CREDENTIAL_TTL: {{ .Values.config.turnCredentialTtl | quote }}

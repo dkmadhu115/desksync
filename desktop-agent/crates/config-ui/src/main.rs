@@ -388,11 +388,16 @@ fn build_devtools(store: &AgentStore) -> DevToolsService {
 /// Spawn a background task that keeps this device marked "online" by sending
 /// periodic heartbeats. Token rotation is handled by the [`AuthSession`], so a
 /// failure here is transient (network/backend) and simply retried next tick.
+///
+/// A problem is logged when it starts and when it clears, not on every tick: at
+/// one heartbeat every few seconds, a backend that is down for an hour would
+/// otherwise bury everything else in hundreds of identical warnings.
 fn spawn_heartbeat(session: Arc<AuthSession>, device_id: String, interval_secs: u64, state: Arc<ServiceState>) {
     let interval = interval_secs.max(5);
     tokio::spawn(async move {
         tracing::info!(device_id = %device_id, interval_secs = interval, "reporting presence");
         let mut ticker = tokio::time::interval(Duration::from_secs(interval));
+        let mut reported: Option<String> = None;
         // interval() fires immediately on the first tick, so presence is
         // reported as soon as the daemon is up.
         loop {
@@ -400,10 +405,19 @@ fn spawn_heartbeat(session: Arc<AuthSession>, device_id: String, interval_secs: 
             match session.heartbeat(&device_id).await {
                 // Clearing on success is what makes `status` show recovery rather
                 // than a stale complaint from hours ago.
-                Ok(()) => state.clear_error(),
+                Ok(()) => {
+                    if reported.take().is_some() {
+                        tracing::info!("presence reporting recovered");
+                    }
+                    state.clear_error();
+                }
                 Err(e) => {
-                    tracing::warn!(error = %e, "heartbeat failed; will retry");
-                    state.record_error(format!("heartbeat failed: {e}"));
+                    let problem = e.to_string();
+                    if reported.as_deref() != Some(problem.as_str()) {
+                        tracing::warn!(error = %problem, "heartbeat failed; will keep retrying");
+                        reported = Some(problem.clone());
+                    }
+                    state.record_error(format!("heartbeat failed: {problem}"));
                 }
             }
         }

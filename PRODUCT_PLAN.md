@@ -218,6 +218,31 @@ Everything lives in `desktop-agent/packaging/macos/`.
   screen-recording and keychain consent on each rebuild. The scaffold is ready for
   a real Developer ID; CI wiring is Epic 4.1.
 
+### Epic 1.7 — Sessions that stay signed in ✅
+Signing in was already good for 30 days (`JWT_REFRESH_TTL`), but a session could be
+destroyed within minutes: the theft response to a repeated refresh token revoked
+**every** token on the account, and a rotation whose response was lost left the
+client holding a token that looked stolen. The result was `session expired` on
+every heartbeat until the user signed in again.
+
+- **Token families** (migration `000007`): each sign-in starts a family and
+  rotations inherit it. Reuse revokes one family, so a phone with a stale token can
+  no longer sign a desktop out.
+- **Retry grace** (`JWT_REFRESH_REUSE_GRACE`, 1m): a spent token is honoured again
+  while its successor is still unused — that is a client retrying a rotation it
+  never got an answer to. Once the successor has been used the client demonstrably
+  received it, so an older token is a replay and is refused.
+- **`JWT_ACCESS_TTL` 15m → 1h**: fewer rotations, less exposure to all of the
+  above. Sign-in length is unchanged; it comes from the refresh token.
+- **Agent**: rotates ~1 min *before* expiry instead of waiting for a `401`, and a
+  session that truly needs sign-in is reported once and retried each minute rather
+  than on every heartbeat.
+- **Mobile**: only a refresh the backend *refuses* clears the tokens. A refresh
+  that was never delivered (offline, timeout, 5xx) leaves the session intact —
+  previously any connectivity blip logged the user out.
+- **Acceptance:** the agent runs for days without re-authenticating; a revoked or
+  replayed token ends one session, not the account.
+
 **Phase 1 exit criteria:** on macOS, download `.pkg` → install → Google sign-in →
 grant permissions via wizard → device auto-registers → connect from phone. All
 without a terminal.

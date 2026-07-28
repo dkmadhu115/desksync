@@ -67,9 +67,26 @@ func (f *fakeUsers) LinkOAuthIdentity(_ context.Context, id domain.OAuthIdentity
 
 type fakeRefresh struct {
 	byID map[string]domain.RefreshToken
+	// now is shared with the service under test so revocation timestamps move
+	// with the clock a test controls.
+	now func() time.Time
 }
 
-func newFakeRefresh() *fakeRefresh { return &fakeRefresh{byID: map[string]domain.RefreshToken{}} }
+func newFakeRefresh() *fakeRefresh {
+	return &fakeRefresh{byID: map[string]domain.RefreshToken{}, now: time.Now}
+}
+
+// activeCount reports how many tokens are still usable, which is how the tests
+// check the blast radius of a revocation.
+func (f *fakeRefresh) activeCount() int {
+	n := 0
+	for _, t := range f.byID {
+		if t.RevokedAt == nil {
+			n++
+		}
+	}
+	return n
+}
 
 func (f *fakeRefresh) Create(_ context.Context, t domain.RefreshToken) error {
 	f.byID[t.ID] = t
@@ -87,14 +104,26 @@ func (f *fakeRefresh) Revoke(_ context.Context, jti string, replacedBy *string) 
 	if !ok {
 		return domain.ErrRefreshNotFound
 	}
-	now := time.Now()
-	t.RevokedAt = &now
-	t.ReplacedBy = replacedBy
-	f.byID[jti] = t
+	if t.RevokedAt == nil {
+		now := f.now()
+		t.RevokedAt = &now
+		t.ReplacedBy = replacedBy
+		f.byID[jti] = t
+	}
+	return nil
+}
+func (f *fakeRefresh) RevokeFamily(_ context.Context, familyID string) error {
+	now := f.now()
+	for jti, t := range f.byID {
+		if t.FamilyID == familyID && t.RevokedAt == nil {
+			t.RevokedAt = &now
+			f.byID[jti] = t
+		}
+	}
 	return nil
 }
 func (f *fakeRefresh) RevokeAllForUser(_ context.Context, userID string) error {
-	now := time.Now()
+	now := f.now()
 	for jti, t := range f.byID {
 		if t.UserID == userID && t.RevokedAt == nil {
 			t.RevokedAt = &now
@@ -106,12 +135,27 @@ func (f *fakeRefresh) RevokeAllForUser(_ context.Context, userID string) error {
 
 // ---- helpers ----
 
+// testReuseGrace is the window a spent refresh token may still be retried in.
+const testReuseGrace = time.Minute
+
+// testClock is a clock the test moves by hand, shared by the service and its
+// repository so a test can step past the reuse grace window without sleeping.
+type testClock struct{ t time.Time }
+
+func (c *testClock) now() time.Time          { return c.t }
+func (c *testClock) advance(d time.Duration) { c.t = c.t.Add(d) }
+
 func newTestService(t *testing.T) (*Service, *fakeRefresh) {
+	svc, fr, _ := newTestServiceWithClock(t)
+	return svc, fr
+}
+
+func newTestServiceWithClock(t *testing.T) (*Service, *fakeRefresh, *testClock) {
 	t.Helper()
 	jm, err := jwtauth.NewManager(config.JWTConfig{
 		AccessSecret:  "0123456789abcdef0123456789abcdef",
 		RefreshSecret: "abcdef0123456789abcdef0123456789",
-		AccessTTL:     15 * time.Minute,
+		AccessTTL:     time.Hour,
 		RefreshTTL:    720 * time.Hour,
 		Issuer:        "desksync-test",
 	})
@@ -122,15 +166,19 @@ func newTestService(t *testing.T) (*Service, *fakeRefresh) {
 	argon.Memory = 8 * 1024
 	argon.Iterations = 1
 
+	clock := &testClock{t: time.Now()}
 	fr := newFakeRefresh()
+	fr.now = clock.now
 	svc := New(Config{
 		Users:      newFakeUsers(),
 		Refresh:    fr,
 		JWT:        jm,
 		Argon:      argon,
 		RefreshTTL: 720 * time.Hour,
+		ReuseGrace: testReuseGrace,
 	})
-	return svc, fr
+	svc.now = clock.now
+	return svc, fr, clock
 }
 
 // ---- tests ----
@@ -201,35 +249,154 @@ func TestRefreshRotation(t *testing.T) {
 		t.Fatal("no new access token")
 	}
 	// Exactly one active token should remain.
-	active := 0
-	for _, tok := range fr.byID {
-		if tok.RevokedAt == nil {
-			active++
-		}
-	}
-	if active != 1 {
+	if active := fr.activeCount(); active != 1 {
 		t.Fatalf("active tokens = %d, want 1", active)
 	}
 }
 
-func TestRefreshReuseDetection(t *testing.T) {
+// A rotation stays inside the family it continues, which is what keeps a
+// revocation from reaching the account's other sessions.
+func TestRefreshKeepsTheFamily(t *testing.T) {
 	svc, fr := newTestService(t)
 	ctx := context.Background()
 	reg, _ := svc.Register(ctx, "dev@example.com", "supersecretpw12", "", Metadata{})
 
+	first := familyOf(t, svc, fr, reg.RefreshToken)
+	rot, err := svc.Refresh(ctx, reg.RefreshToken, Metadata{})
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if got := familyOf(t, svc, fr, rot.RefreshToken); got != first {
+		t.Fatalf("family after rotation = %q, want %q", got, first)
+	}
+}
+
+// Two sign-ins are two sessions: signing in twice must not put both devices in
+// one family, or a theft response would take out both.
+func TestSignInStartsANewFamily(t *testing.T) {
+	svc, fr := newTestService(t)
+	ctx := context.Background()
+	reg, _ := svc.Register(ctx, "dev@example.com", "supersecretpw12", "", Metadata{})
+	second, err := svc.Login(ctx, "dev@example.com", "supersecretpw12", Metadata{})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if familyOf(t, svc, fr, reg.RefreshToken) == familyOf(t, svc, fr, second.RefreshToken) {
+		t.Fatal("a second sign-in joined the first session's family")
+	}
+}
+
+func TestRefreshReuseDetection(t *testing.T) {
+	svc, _, clock := newTestServiceWithClock(t)
+	ctx := context.Background()
+	reg, _ := svc.Register(ctx, "dev@example.com", "supersecretpw12", "", Metadata{})
+
 	// First rotation succeeds and revokes the original.
-	if _, err := svc.Refresh(ctx, reg.RefreshToken, Metadata{}); err != nil {
+	rot, err := svc.Refresh(ctx, reg.RefreshToken, Metadata{})
+	if err != nil {
 		t.Fatalf("first refresh: %v", err)
 	}
-	// Reusing the original (now revoked) token must fail and nuke the family.
+	// Past the grace window the client cannot still be retrying, so reusing the
+	// original token is theft and ends this session.
+	clock.advance(testReuseGrace + time.Second)
 	if _, err := svc.Refresh(ctx, reg.RefreshToken, Metadata{}); err == nil {
 		t.Fatal("expected reuse detection error")
 	}
-	for _, tok := range fr.byID {
-		if tok.RevokedAt == nil {
-			t.Fatal("reuse detection should revoke all tokens for the user")
-		}
+	if _, err := svc.Refresh(ctx, rot.RefreshToken, Metadata{}); err == nil {
+		t.Fatal("the live token in a compromised family should have been revoked")
 	}
+}
+
+// The theft response must end one session, not the account. This is the failure
+// that logged a working desktop out whenever a phone presented a stale token.
+func TestReuseDetectionSparesOtherDevices(t *testing.T) {
+	svc, _, clock := newTestServiceWithClock(t)
+	ctx := context.Background()
+	phone, _ := svc.Register(ctx, "dev@example.com", "supersecretpw12", "", Metadata{})
+	desktop, err := svc.Login(ctx, "dev@example.com", "supersecretpw12", Metadata{})
+	if err != nil {
+		t.Fatalf("second sign-in: %v", err)
+	}
+
+	// The phone rotates, then replays its spent token long after the fact.
+	if _, err := svc.Refresh(ctx, phone.RefreshToken, Metadata{}); err != nil {
+		t.Fatalf("phone refresh: %v", err)
+	}
+	clock.advance(testReuseGrace + time.Second)
+	if _, err := svc.Refresh(ctx, phone.RefreshToken, Metadata{}); err == nil {
+		t.Fatal("expected reuse detection for the replayed token")
+	}
+
+	// The desktop never misbehaved and must still be signed in.
+	if _, err := svc.Refresh(ctx, desktop.RefreshToken, Metadata{}); err != nil {
+		t.Fatalf("the desktop session was collateral damage: %v", err)
+	}
+}
+
+// A client that never receives the response to its rotation has no choice but to
+// retry with the token it still holds. That is indistinguishable from theft on
+// the wire, so it is allowed briefly — otherwise every dropped response costs the
+// user a session.
+func TestRefreshHonoursARetryAfterALostResponse(t *testing.T) {
+	svc, fr, clock := newTestServiceWithClock(t)
+	ctx := context.Background()
+	reg, _ := svc.Register(ctx, "dev@example.com", "supersecretpw12", "", Metadata{})
+
+	// The rotation succeeds server-side but the response is lost in transit.
+	lost, err := svc.Refresh(ctx, reg.RefreshToken, Metadata{})
+	if err != nil {
+		t.Fatalf("first refresh: %v", err)
+	}
+
+	clock.advance(5 * time.Second)
+	retry, err := svc.Refresh(ctx, reg.RefreshToken, Metadata{})
+	if err != nil {
+		t.Fatalf("a retried rotation should be honoured: %v", err)
+	}
+	if retry.RefreshToken == lost.RefreshToken {
+		t.Fatal("the retry handed back the pair the client never received")
+	}
+	// The pair from the retry is the live one, and the unseen one is spent.
+	if _, err := svc.Refresh(ctx, retry.RefreshToken, Metadata{}); err != nil {
+		t.Fatalf("the pair from the retry should be usable: %v", err)
+	}
+	if fr.activeCount() != 1 {
+		t.Fatalf("active tokens = %d, want 1", fr.activeCount())
+	}
+}
+
+// Once the successor has been used, the client demonstrably received it, so an
+// older token turning up is a replay rather than a retry.
+func TestRefreshRejectsAReplayOnceTheSuccessorWasUsed(t *testing.T) {
+	svc, _, _ := newTestServiceWithClock(t)
+	ctx := context.Background()
+	reg, _ := svc.Register(ctx, "dev@example.com", "supersecretpw12", "", Metadata{})
+
+	first, err := svc.Refresh(ctx, reg.RefreshToken, Metadata{})
+	if err != nil {
+		t.Fatalf("first refresh: %v", err)
+	}
+	if _, err := svc.Refresh(ctx, first.RefreshToken, Metadata{}); err != nil {
+		t.Fatalf("second refresh: %v", err)
+	}
+	// Still inside the grace window, but the chain has moved on.
+	if _, err := svc.Refresh(ctx, reg.RefreshToken, Metadata{}); err == nil {
+		t.Fatal("expected reuse detection for a replayed token")
+	}
+}
+
+// familyOf resolves the family a refresh token belongs to.
+func familyOf(t *testing.T, svc *Service, fr *fakeRefresh, refreshToken string) string {
+	t.Helper()
+	claims, err := svc.jwt.VerifyRefresh(refreshToken)
+	if err != nil {
+		t.Fatalf("verify refresh token: %v", err)
+	}
+	stored, ok := fr.byID[claims.ID]
+	if !ok {
+		t.Fatalf("refresh token %s is not stored", claims.ID)
+	}
+	return stored.FamilyID
 }
 
 func TestLogoutRevokes(t *testing.T) {

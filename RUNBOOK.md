@@ -230,10 +230,33 @@ keychain** (macOS Keychain / Windows Credential Manager / Linux Secret Service) 
 sensitive is written to `config.json`. It then registers this desktop, so the
 device appears in the mobile app right away.
 
-Access tokens are rotated automatically: any call that gets a `401` refreshes and
-retries once, and the new pair is written back to the keychain. If the refresh
-token itself is rejected (revoked, or expired after long downtime) the agent logs
-`session expired; run \`desksync-agent login\`` — re-run `login`.
+### How long a sign-in lasts
+
+**30 days**, and every day of use extends it. `login` is needed again only after a
+month of the agent never running, or if the session is explicitly revoked.
+
+Access tokens are separate and short (`JWT_ACCESS_TTL`, 1h): the agent rotates
+them behind the scenes, shortly before they expire and again on any `401`, and
+writes each new pair back to the keychain. That is why `JWT_ACCESS_TTL` can stay
+short — it bounds how long a revoked account keeps working, not how long a user
+stays logged in.
+
+Rotation is deliberately careful, because a refresh token must never be presented
+twice: the backend treats a repeat as possible theft.
+
+- Only **one** rotation is ever in flight, so the heartbeat and session poller
+  can't refresh with the same token when they expire together.
+- A token the backend has refused is never sent again.
+- If another DeskSync process (`setup`, `login`, a second agent) rotated the
+  shared keychain entry, this one adopts what is stored rather than reporting an
+  expiry.
+- The backend allows a spent token to be retried for `JWT_REFRESH_REUSE_GRACE`
+  (1m), so a rotation whose response was lost to a network drop can be repeated
+  instead of costing the session.
+
+If the refresh token really is rejected, the agent logs `session expired; run
+\`desksync-agent login\`` **once** and retries on a one-minute cadence — running
+`login` in another terminal is picked up without restarting the service.
 
 > **Google Cloud Console setup (one-time).** The desktop never holds the client
 > secret — it signs in *through* the backend. So the only authorized redirect URI
@@ -467,7 +490,7 @@ video" to "connects and streams."
 | Symptom | Likely cause | Check / fix |
 |---------|--------------|-------------|
 | Device shows **offline** on phone | agent not running / not authenticated | `desksync status` — it names the reason |
-| Works ~15 min then **`session expired`** | (fixed) two tasks refreshed the same token; the backend read the repeat as theft and revoked every token for the account | fixed by single-flight rotation; if seen on an old build, `login` again and update |
+| Works a while, then **`session expired`** every tick | (fixed) a repeat refresh — from a second task, a retry after a dropped response, or another device — was read as theft, and the response revoked *every* token on the account | fixed by single-flight rotation, per-session token families, and a 1m retry grace; needs migration 000007 deployed. On an old build: `login` again |
 | App **closes** right after Connect | (old bug) null `sdpMid` | ensure app ≥ v1.0.3 |
 | Connected but **blank screen** | frames not sent | agent log: `frame stream stats sent:>0`? if `sent:0`, check `frames_open`/channel |
 | Blank screen, `sent` climbing | macOS **Screen Recording** off → black frames | grant permission, restart agent |

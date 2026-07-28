@@ -53,12 +53,21 @@ func LoadRedis() RedisConfig {
 }
 
 // JWTConfig holds token signing configuration.
+//
+// A signed-in client stays signed in for RefreshTTL: it exchanges its refresh
+// token for a new pair whenever the (deliberately short-lived) access token runs
+// out. AccessTTL therefore controls how quickly a revoked account loses access,
+// not how long a user stays logged in.
 type JWTConfig struct {
 	AccessSecret  string
 	RefreshSecret string
 	AccessTTL     time.Duration
 	RefreshTTL    time.Duration
-	Issuer        string
+	// ReuseGrace is how long after a rotation the spent refresh token is still
+	// honoured, so a client that never received the response to its rotation can
+	// retry instead of losing the session.
+	ReuseGrace time.Duration
+	Issuer     string
 }
 
 // LoadJWT reads JWT configuration from the environment.
@@ -66,8 +75,9 @@ func LoadJWT() JWTConfig {
 	return JWTConfig{
 		AccessSecret:  GetString("JWT_ACCESS_SECRET", ""),
 		RefreshSecret: GetString("JWT_REFRESH_SECRET", ""),
-		AccessTTL:     GetDuration("JWT_ACCESS_TTL", 15*time.Minute),
+		AccessTTL:     GetDuration("JWT_ACCESS_TTL", time.Hour),
 		RefreshTTL:    GetDuration("JWT_REFRESH_TTL", 720*time.Hour),
+		ReuseGrace:    GetDuration("JWT_REFRESH_REUSE_GRACE", time.Minute),
 		Issuer:        GetString("JWT_ISSUER", "desksync"),
 	}
 }
