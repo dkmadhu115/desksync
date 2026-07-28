@@ -400,15 +400,19 @@ cd /home/apollo/DeskSync/mobile
 flutter build apk --release --split-per-abi
 ```
 
-The endpoints now default to `https://dkmadhutech.com` in `lib/core/config/env.dart`,
-so no `--dart-define` is needed for a production build. Override them only to aim
-the app elsewhere:
+The gateway URL defaults to `https://dkmadhutech.com` in `lib/core/config/env.dart`,
+so no `--dart-define` is needed for a production build. Override it only to aim
+the app at a different backend:
 
 ```bash
 flutter build apk --release --split-per-abi \
-  --dart-define=DESKSYNC_API_BASE_URL=http://192.168.1.10:8080 \
-  --dart-define=DESKSYNC_SIGNALING_URL=ws://192.168.1.10:8085/api/v1/signaling
+  --dart-define=DESKSYNC_API_BASE_URL=http://192.168.1.10:8080
 ```
+
+That is the *only* endpoint the app compiles in. The signaling WebSocket URL
+comes back with each session (`signaling_url`, from the backend's
+`SIGNALING_PUBLIC_URL`), so pointing the app at a backend is enough to move its
+signaling too.
 
 Outputs in `build/app/outputs/flutter-apk/`:
 - `app-arm64-v8a-release.apk`  (~38 MB) — most phones

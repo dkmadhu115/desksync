@@ -6,15 +6,14 @@
 /// backend you are running yourself.
 abstract final class Env {
   /// Base URL of the API gateway.
+  ///
+  /// The only endpoint the app needs configured. The signaling WebSocket URL is
+  /// not compiled in: each session's response carries its own `signaling_url`
+  /// (from the backend's `SIGNALING_PUBLIC_URL`), so the two can never disagree
+  /// and a backend can move its signaling service without reissuing the app.
   static const String apiBaseUrl = String.fromEnvironment(
     'DESKSYNC_API_BASE_URL',
     defaultValue: 'https://dkmadhutech.com',
-  );
-
-  /// Secure WebSocket URL of the signaling service.
-  static const String signalingUrl = String.fromEnvironment(
-    'DESKSYNC_SIGNALING_URL',
-    defaultValue: 'wss://dkmadhutech.com/api/v1/signaling',
   );
 
   /// Request timeout in milliseconds.

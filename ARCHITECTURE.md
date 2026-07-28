@@ -376,11 +376,11 @@ cargo build -p desksync-agent --features native
 ./target/debug/desksync-agent setup     # sign in, permissions, register, service
 ./target/debug/desksync-agent           # run it (DESKSYNC_LOG=debug for detail)
 
-# Mobile app (endpoints default to the hosted service; override to aim elsewhere)
+# Mobile app (defaults to the hosted service; the signaling URL comes from the
+# backend with each session, so only the gateway needs pointing)
 cd mobile
 flutter build apk --release --split-per-abi \
-  --dart-define=DESKSYNC_API_BASE_URL=http://<host>:8080 \
-  --dart-define=DESKSYNC_SIGNALING_URL=ws://<host>:8085/api/v1/signaling
+  --dart-define=DESKSYNC_API_BASE_URL=http://<host>:8080
 ```
 
 **Flow to connect:** start backend → run agent (registers + goes online) →
