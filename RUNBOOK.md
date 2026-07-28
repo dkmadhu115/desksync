@@ -112,7 +112,10 @@ session runtime ready; watching for incoming sessions
 capture pipeline produced first frame  width=... height=...
 ```
 
-For verbose troubleshooting: `RUST_LOG="info,desksync_media=trace,webrtc_ice=warn"`.
+For verbose troubleshooting: `DESKSYNC_LOG="info,desksync_media=trace,webrtc_ice=warn"`.
+The variable is `DESKSYNC_LOG`, **not** `RUST_LOG` — setting `RUST_LOG` is silently
+ignored and you get default `info` output, which looks like the logging you asked
+for simply not existing.
 
 ### Ask the running agent what it's doing
 
@@ -454,7 +457,7 @@ video" to "connects and streams."
 
 ### Diagnostics left in place
 - Agent logs `frame stream stats {sent, dropped, last_frame_bytes}` every 30
-  frames (set `RUST_LOG=...desksync_media=trace` for per-drop reasons).
+  frames (set `DESKSYNC_LOG=...desksync_media=trace` for per-drop reasons).
 - To read a phone crash/log: `adb logcat -b crash -b main -v threadtime`.
 
 ---
@@ -463,7 +466,8 @@ video" to "connects and streams."
 
 | Symptom | Likely cause | Check / fix |
 |---------|--------------|-------------|
-| Device shows **offline** on phone | agent not running / not authenticated | start agent; look for `heartbeat: authenticated` |
+| Device shows **offline** on phone | agent not running / not authenticated | `desksync status` — it names the reason |
+| Works ~15 min then **`session expired`** | (fixed) two tasks refreshed the same token; the backend read the repeat as theft and revoked every token for the account | fixed by single-flight rotation; if seen on an old build, `login` again and update |
 | App **closes** right after Connect | (old bug) null `sdpMid` | ensure app ≥ v1.0.3 |
 | Connected but **blank screen** | frames not sent | agent log: `frame stream stats sent:>0`? if `sent:0`, check `frames_open`/channel |
 | Blank screen, `sent` climbing | macOS **Screen Recording** off → black frames | grant permission, restart agent |

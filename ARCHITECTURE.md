@@ -358,8 +358,8 @@ helm upgrade --install desksync ./helm/desksync -n desksync --create-namespace \
 # Desktop agent (the host / Mac being controlled)
 cd desktop-agent
 cargo build -p desksync-agent --features native
-DESKSYNC_EMAIL=... DESKSYNC_PASSWORD=... RUST_LOG=info ./target/debug/desksync-agent
-# (macOS: grant Screen Recording permission to the launching app)
+./target/debug/desksync-agent setup     # sign in, permissions, register, service
+./target/debug/desksync-agent           # run it (DESKSYNC_LOG=debug for detail)
 
 # Mobile app
 cd mobile

@@ -73,6 +73,20 @@ impl TokenSink for KeychainTokenSink {
         };
         save_tokens(self.secrets.as_ref(), &bundle).map_err(|e| BackendError::Invalid(e.to_string()))
     }
+
+    fn load(&self) -> desksync_backend::Result<Option<TokenPair>> {
+        let bundle = load_tokens(self.secrets.as_ref()).map_err(|e| BackendError::Invalid(e.to_string()))?;
+        // Cloned rather than moved: TokenBundle zeroizes its secrets on drop, so
+        // its fields cannot be moved out.
+        Ok(bundle.map(|b| TokenPair {
+            access_token: b.access_token.clone(),
+            refresh_token: b.refresh_token.clone(),
+            // The store keeps no token type or lifetime; both are re-established by
+            // the rotation this pair is about to be used for.
+            token_type: "Bearer".into(),
+            expires_in: 0,
+        }))
+    }
 }
 
 /// A signed-in agent: an authenticated backend session plus the registered
