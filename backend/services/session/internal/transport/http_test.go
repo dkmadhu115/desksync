@@ -61,7 +61,12 @@ func (f *fakeRepo) ListSessions(_ context.Context, _ string, _ int) ([]domain.Se
 	return f.sessions, nil
 }
 
-func (f *fakeRepo) PendingSessionsForDevice(_ context.Context, _, _ string, _ int) ([]domain.Session, error) {
+func (f *fakeRepo) PendingSessionsForDevice(
+	_ context.Context,
+	_, _ string,
+	_ time.Duration,
+	_ int,
+) ([]domain.Session, error) {
 	return f.pending, nil
 }
 

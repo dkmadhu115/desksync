@@ -27,10 +27,14 @@ use desksync_core::{
 };
 use desksync_devtools::{DevToolsService, SshHost, SshHostRegistry, TokioCommandRunner, Workspace, WorkspaceRegistry};
 use desksync_input::{Clipboard, InputInjector, InputRouter};
+use desksync_ipc::{Request as IpcRequest, Response as IpcResponse, StatusSource};
 
 mod agent_auth;
+mod service_state;
 #[cfg(feature = "native")]
 mod session_runtime;
+
+use service_state::ServiceState;
 
 fn init_tracing() {
     use tracing_subscriber::{fmt, EnvFilter};
@@ -249,6 +253,54 @@ fn run_service(action: Option<&str>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Ask the running service what it is doing, over local IPC.
+///
+/// This is the "why isn't it working" command: it reports sign-in, the device it
+/// is acting as, whether capture is actually producing frames, how many sessions
+/// are live, and the last error — without needing the log file.
+async fn run_status(store: &AgentStore) -> anyhow::Result<()> {
+    match desksync_ipc::request(store.dir(), IpcRequest::GetStatus).await {
+        Ok(IpcResponse::Status(status)) => {
+            println!("DeskSync service v{}", status.version);
+            println!("  Signed in:       {}", if status.signed_in { "yes" } else { "no" });
+            println!("  Device id:       {}", status.device_id);
+            println!("  Backend:         {}", status.api_url);
+            println!(
+                "  Capture:         max {}p at {} fps — {}",
+                status.capture.max_height,
+                status.capture.target_fps,
+                if status.capture.producing_frames {
+                    "producing frames"
+                } else {
+                    "NO frames captured"
+                }
+            );
+            println!("  Active sessions: {}", status.active_sessions);
+            println!("  Uptime:          {}s", status.uptime_secs);
+            match &status.last_error {
+                Some(e) => println!("  Last error:      {e}"),
+                None => println!("  Last error:      none"),
+            }
+            if !status.capture.producing_frames {
+                println!(
+                    "\nNo frames captured yet. On macOS this usually means Screen Recording\n\
+                     permission is missing for the agent binary."
+                );
+            }
+            Ok(())
+        }
+        Ok(IpcResponse::Error { message }) => bail!("service reported: {message}"),
+        Ok(other) => bail!("unexpected response from the service: {other:?}"),
+        Err(desksync_ipc::IpcError::NotRunning) => {
+            println!("The DeskSync service is not running.");
+            println!("Start it in the background with `desksync-agent service install`,");
+            println!("or in the foreground with `desksync-agent`.");
+            Ok(())
+        }
+        Err(e) => Err(anyhow::Error::new(e).context("querying the service")),
+    }
+}
+
 /// Print the command surface. Kept short: the daemon is the default mode and the
 /// rest are one-shot administrative commands.
 fn print_usage() {
@@ -260,6 +312,7 @@ fn print_usage() {
          \x20 desksync-agent login --password   sign in with DESKSYNC_EMAIL/DESKSYNC_PASSWORD\n\
          \x20 desksync-agent logout             remove stored credentials\n\
          \x20 desksync-agent pair               show a pairing QR code for the mobile app\n\
+         \x20 desksync-agent status             ask the running agent what it is doing\n\
          \x20 desksync-agent service install    run in the background, starting at login\n\
          \x20 desksync-agent service status     show whether the service is installed/running\n\
          \x20 desksync-agent service restart    restart the background service\n\
@@ -315,7 +368,7 @@ fn build_devtools(store: &AgentStore) -> DevToolsService {
 /// Spawn a background task that keeps this device marked "online" by sending
 /// periodic heartbeats. Token rotation is handled by the [`AuthSession`], so a
 /// failure here is transient (network/backend) and simply retried next tick.
-fn spawn_heartbeat(session: Arc<AuthSession>, device_id: String, interval_secs: u64) {
+fn spawn_heartbeat(session: Arc<AuthSession>, device_id: String, interval_secs: u64, state: Arc<ServiceState>) {
     let interval = interval_secs.max(5);
     tokio::spawn(async move {
         tracing::info!(device_id = %device_id, interval_secs = interval, "reporting presence");
@@ -324,8 +377,14 @@ fn spawn_heartbeat(session: Arc<AuthSession>, device_id: String, interval_secs: 
         // reported as soon as the daemon is up.
         loop {
             ticker.tick().await;
-            if let Err(e) = session.heartbeat(&device_id).await {
-                tracing::warn!(error = %e, "heartbeat failed; will retry");
+            match session.heartbeat(&device_id).await {
+                // Clearing on success is what makes `status` show recovery rather
+                // than a stale complaint from hours ago.
+                Ok(()) => state.clear_error(),
+                Err(e) => {
+                    tracing::warn!(error = %e, "heartbeat failed; will retry");
+                    state.record_error(format!("heartbeat failed: {e}"));
+                }
             }
         }
     });
@@ -362,6 +421,7 @@ async fn main() -> anyhow::Result<()> {
             return run_login(&store, &config, &identity, mode).await;
         }
         Some("logout") => return run_logout(&store),
+        Some("status") => return run_status(&store).await,
         Some("service") => return run_service(args.get(1).map(String::as_str)),
         Some("help" | "--help" | "-h") => {
             print_usage();
@@ -442,18 +502,46 @@ async fn main() -> anyhow::Result<()> {
     // the (possibly permission-degraded) native backend.
     let input_router = Arc::new(InputRouter::new(Arc::clone(&injector), make_clipboard()));
 
+    // Live state published over local IPC, so `desksync-agent status` can answer
+    // "what are you doing?" once this process has no terminal attached.
+    let state = Arc::new(ServiceState::new(
+        &config,
+        Arc::clone(&capture_loop),
+        ServiceManager::for_current_exe()
+            .ok()
+            .and_then(|m| m.log_path())
+            .map(|p| p.display().to_string()),
+    ));
+
     // Sign-in state: stored keychain credentials (from `desksync-agent login`),
     // or password credentials in the environment for CI. With neither, the agent
     // still runs locally — it just can't report presence or accept sessions,
     // which is recoverable by signing in and restarting.
     let account = match agent_auth::bootstrap(&store, &config, &identity).await {
-        Ok(Some(account)) => Some(account),
+        Ok(Some(account)) => {
+            state.set_signed_in(&account.device_id);
+            Some(account)
+        }
         Ok(None) => {
-            tracing::warn!("not signed in; run `desksync-agent login` to connect this desktop to your account");
+            let msg = "not signed in; run `desksync-agent login` to connect this desktop to your account";
+            tracing::warn!("{msg}");
+            state.record_error(msg);
             None
         }
         Err(e) => {
-            tracing::error!(error = format!("{e:#}"), "sign-in failed; continuing without backend connectivity");
+            let msg = format!("{e:#}");
+            tracing::error!(error = %msg, "sign-in failed; continuing without backend connectivity");
+            state.record_error(msg);
+            None
+        }
+    };
+
+    // Serve status queries. A failure here must not stop the agent: losing the
+    // diagnostics channel is far less bad than not running at all.
+    let _ipc = match desksync_ipc::listen(store.dir(), Arc::clone(&state) as Arc<dyn StatusSource>).await {
+        Ok(server) => Some(server),
+        Err(e) => {
+            tracing::warn!(error = %e, "status ipc unavailable; `desksync-agent status` will not work");
             None
         }
     };
@@ -464,6 +552,7 @@ async fn main() -> anyhow::Result<()> {
             Arc::clone(&account.session),
             account.device_id.clone(),
             config.heartbeat_secs,
+            Arc::clone(&state),
         );
     }
 
@@ -479,6 +568,7 @@ async fn main() -> anyhow::Result<()> {
                     Arc::clone(&capture_loop),
                     Arc::clone(&input_router),
                     Arc::clone(&devtools),
+                    Arc::clone(&state),
                 ));
                 tokio::spawn(manager.run());
             }

@@ -28,6 +28,8 @@ use desksync_transport::{
 };
 use tokio::sync::Mutex;
 
+use crate::service_state::ServiceState;
+
 /// How often to poll the backend for pending sessions.
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// Target frame interval for the stream (~15 fps) to bound CPU/bandwidth.
@@ -42,6 +44,7 @@ pub struct SessionManager {
     capture: Arc<CaptureLoop>,
     input: Arc<InputRouter>,
     devtools: Arc<DevToolsService>,
+    state: Arc<ServiceState>,
 }
 
 impl SessionManager {
@@ -52,6 +55,7 @@ impl SessionManager {
         capture: Arc<CaptureLoop>,
         input: Arc<InputRouter>,
         devtools: Arc<DevToolsService>,
+        state: Arc<ServiceState>,
     ) -> Self {
         Self {
             auth,
@@ -59,6 +63,7 @@ impl SessionManager {
             capture,
             input,
             devtools,
+            state,
         }
     }
 
@@ -104,8 +109,12 @@ impl SessionManager {
                 tracing::info!(session_id = %session_id, "answering incoming session");
                 let this = Arc::clone(&self);
                 tokio::spawn(async move {
+                    // Held for the whole session so `status` counts it, however
+                    // the task ends.
+                    let _tracked = this.state.track_session();
                     if let Err(e) = this.handle_session(ps).await {
                         tracing::warn!(session_id = %session_id, error = %e, "session ended with error");
+                        this.state.record_error(format!("session {session_id} failed: {e}"));
                     } else {
                         tracing::info!(session_id = %session_id, "session ended");
                     }

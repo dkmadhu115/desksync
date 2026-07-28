@@ -24,6 +24,21 @@ use std::path::{Path, PathBuf};
 const CONFIG_FILE: &str = "config.json";
 const IDENTITY_FILE: &str = "identity.key";
 
+/// Environment variable that relocates the whole agent state directory.
+pub const CONFIG_DIR_ENV: &str = "DESKSYNC_CONFIG_DIR";
+
+/// Resolve the state directory from an optional override.
+///
+/// Split out from [`AgentStore::platform_default`] so it is testable without
+/// mutating process-wide environment state.
+fn resolve_dir(override_dir: Option<std::ffi::OsString>) -> Result<PathBuf> {
+    if let Some(dir) = override_dir.filter(|d| !d.is_empty()) {
+        return Ok(PathBuf::from(dir));
+    }
+    let base = dirs::config_dir().ok_or_else(|| AgentError::Config("no OS config directory available".into()))?;
+    Ok(base.join("desksync"))
+}
+
 /// Filesystem-backed store rooted at a per-user config directory.
 #[derive(Debug, Clone)]
 pub struct AgentStore {
@@ -37,10 +52,14 @@ impl AgentStore {
         Self { dir: dir.into() }
     }
 
-    /// Create a store rooted at the OS-appropriate per-user config directory.
+    /// Create a store rooted at the OS-appropriate per-user config directory,
+    /// or at `DESKSYNC_CONFIG_DIR` when that is set.
+    ///
+    /// The override exists so a second, fully isolated instance can be run — its
+    /// own config, identity, instance lock, and IPC socket — without touching the
+    /// real one. Useful for testing a build before installing it as the service.
     pub fn platform_default() -> Result<Self> {
-        let base = dirs::config_dir().ok_or_else(|| AgentError::Config("no OS config directory available".into()))?;
-        Ok(Self::at(base.join("desksync")))
+        Ok(Self::at(resolve_dir(std::env::var_os(CONFIG_DIR_ENV))?))
     }
 
     /// The directory backing this store.
@@ -126,6 +145,22 @@ fn set_mode(_path: &Path, _mode: u32) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn an_override_relocates_the_whole_state_directory() {
+        let dir = resolve_dir(Some("/tmp/desksync-alt".into())).unwrap();
+        assert_eq!(dir, PathBuf::from("/tmp/desksync-alt"));
+    }
+
+    #[test]
+    fn an_empty_override_falls_back_to_the_platform_directory() {
+        // An exported-but-empty variable is a common shell accident; treating it
+        // as "use the default" avoids writing state into the filesystem root.
+        let dir = resolve_dir(Some("".into())).unwrap();
+        assert!(dir.ends_with("desksync"));
+        let default = resolve_dir(None).unwrap();
+        assert_eq!(dir, default);
+    }
 
     #[test]
     fn config_roundtrips_on_disk() {

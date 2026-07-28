@@ -108,6 +108,42 @@ capture pipeline produced first frame  width=... height=...
 
 For verbose troubleshooting: `RUST_LOG="info,desksync_media=trace,webrtc_ice=warn"`.
 
+### Ask the running agent what it's doing
+
+```bash
+./target/debug/desksync-agent status
+```
+
+```text
+DeskSync service v0.1.0
+  Signed in:       yes
+  Device id:       b1328bbf-f595-45ec-8d85-a7a5b081f502
+  Backend:         http://20.109.60.233:8080
+  Capture:         max 720p at 20 fps — producing frames
+  Active sessions: 0
+  Uptime:          15s
+  Last error:      none
+```
+
+This works whether the agent runs in the foreground or as the background service —
+it asks over a Unix socket in the config directory (owner-only, plus a per-install
+token). Read it as follows:
+
+| Line | What it tells you |
+|------|-------------------|
+| `Signed in: no` | run `login`; the device will show offline |
+| `NO frames captured` | Screen Recording permission missing → blank frames |
+| `Active sessions` | how many phones are connected right now |
+| `Last error` | the most recent failure, cleared on recovery |
+
+To try a build without disturbing the installed service, run it against a throwaway
+state directory — its own config, identity, instance lock, and socket:
+
+```bash
+DESKSYNC_CONFIG_DIR=/tmp/desksync-test ./target/debug/desksync-agent &
+DESKSYNC_CONFIG_DIR=/tmp/desksync-test ./target/debug/desksync-agent status
+```
+
 ### Run it in the background (survives closing the terminal)
 
 ```bash

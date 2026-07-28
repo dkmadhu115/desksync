@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/desksync/backend/services/session/internal/domain"
 	"github.com/jackc/pgx/v5"
@@ -108,10 +109,18 @@ func (r *SessionRepo) ListSessions(ctx context.Context, userID string, limit int
 	return out, rows.Err()
 }
 
-// PendingSessionsForDevice returns connecting sessions for the user whose
-// pairing targets the given desktop device. The agent polls this to discover
-// sessions it should answer.
-func (r *SessionRepo) PendingSessionsForDevice(ctx context.Context, userID, desktopDeviceID string, limit int) ([]domain.Session, error) {
+// PendingSessionsForDevice returns recently-started connecting sessions for the
+// user whose pairing targets the given desktop device. The agent polls this to
+// discover sessions it should answer.
+//
+// The maxAge bound is what keeps abandoned handshakes from being served forever;
+// see the interface docs in the domain package.
+func (r *SessionRepo) PendingSessionsForDevice(
+	ctx context.Context,
+	userID, desktopDeviceID string,
+	maxAge time.Duration,
+	limit int,
+) ([]domain.Session, error) {
 	if limit <= 0 || limit > 50 {
 		limit = 10
 	}
@@ -121,9 +130,10 @@ func (r *SessionRepo) PendingSessionsForDevice(ctx context.Context, userID, desk
 		WHERE s.user_id = $1
 		  AND p.desktop_device_id = $2
 		  AND s.status = 'connecting'
+		  AND s.started_at > $3
 		ORDER BY s.started_at DESC
-		LIMIT $3`
-	rows, err := r.pool.Query(ctx, q, userID, desktopDeviceID, limit)
+		LIMIT $4`
+	rows, err := r.pool.Query(ctx, q, userID, desktopDeviceID, time.Now().UTC().Add(-maxAge), limit)
 	if err != nil {
 		return nil, fmt.Errorf("pending sessions: %w", err)
 	}

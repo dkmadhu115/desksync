@@ -1,0 +1,24 @@
+[package]
+name = "desksync-ipc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Local IPC between the DeskSync background service and its UI/CLI clients."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+# The transport is a Unix domain socket, so the server needs `net` and framed
+# line reads need `io-util`.
+tokio = { workspace = true, features = ["net", "io-util", "fs"] }
+# Per-install auth token: OS entropy to generate it, constant-time comparison to
+# check it.
+getrandom.workspace = true
+subtle = "2"
+
+[dev-dependencies]
+tempfile = "3"

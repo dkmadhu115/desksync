@@ -15,6 +15,16 @@ import (
 	"github.com/desksync/backend/services/session/internal/ice"
 )
 
+// PendingSessionMaxAge bounds how long a session may sit in 'connecting' and
+// still be offered to the desktop agent.
+//
+// Answering a session means a signaling connection and a WebRTC peer, so serving
+// stale rows is not free: a controller that disappeared mid-connect would
+// otherwise be re-answered on every poll, forever. Two minutes is far longer than
+// a handshake needs while still tolerating a slow network or a phone that briefly
+// backgrounded the app.
+const PendingSessionMaxAge = 2 * time.Minute
+
 // TicketIssuer mints signaling tickets.
 type TicketIssuer interface {
 	Issue(sessionID, userID string, role signalticket.Role) (string, error)
@@ -153,7 +163,7 @@ func (s *Service) PendingForDevice(ctx context.Context, userID, desktopDeviceID 
 	if desktopDeviceID == "" {
 		return nil, apperr.New(apperr.CodeInvalidInput, "device_id is required")
 	}
-	sessions, err := s.repo.PendingSessionsForDevice(ctx, userID, desktopDeviceID, 10)
+	sessions, err := s.repo.PendingSessionsForDevice(ctx, userID, desktopDeviceID, PendingSessionMaxAge, 10)
 	if err != nil {
 		return nil, apperr.Wrap(apperr.CodeInternal, "failed to list pending sessions", err)
 	}

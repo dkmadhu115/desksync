@@ -15,6 +15,7 @@ members = [
     "crates/media",
     "crates/backend",
     "crates/devtools",
+    "crates/ipc",
     "crates/config-ui",
 ]
 
@@ -79,6 +80,7 @@ desksync-transport = { path = "crates/transport" }
 desksync-media = { path = "crates/media" }
 desksync-backend = { path = "crates/backend" }
 desksync-devtools = { path = "crates/devtools" }
+desksync-ipc = { path = "crates/ipc" }
 
 [profile.release]
 opt-level = 3

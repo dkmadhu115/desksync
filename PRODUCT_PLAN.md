@@ -124,10 +124,22 @@ device registration. macOS first (our live test box), then Windows, then Linux.
 - The daemon reconciles only the *entry* (`reconcile_entry`), never activation, so
   it cannot bootout the job it is running as; a test pins that the entry it writes
   is byte-identical to the one `install` writes.
-- **Deferred:** extracting a separate `desksync-service` binary + Tauri
-  `desksync-ui`. The service now behaves correctly as a single binary, and the
-  current product direction is CLI-on-desktop + app-on-phone, so the UI split is
-  not on the critical path.
+- **IPC contract (new `desksync-ipc` crate):** newline-delimited JSON over a Unix
+  domain socket in the agent config directory, with a per-install token
+  (owner-only file, constant-time compare) and owner-only socket permissions.
+  `Ping`, `GetStatus`, and `GetLogPath` are implemented; the service publishes
+  live state (sign-in, device id, backend URL, capture settings, whether frames
+  are actually being produced, active sessions, last error) and `desksync-agent
+  status` renders it. Binding reclaims a socket left by a crashed service but
+  refuses to steal one from a live instance. Windows named pipes return
+  `Unsupported` rather than pretending to work.
+- `DESKSYNC_CONFIG_DIR` relocates the whole state directory, so a second isolated
+  instance (own config, identity, lock, and socket) can be run to test a build
+  before installing it as the service.
+- **Deferred:** a separate `desksync-service` binary and the Tauri `desksync-ui`.
+  The IPC contract those need now exists and is tested, so the UI becomes an
+  additive client rather than a refactor. The current product direction is
+  CLI-on-desktop + app-on-phone, so the window itself is not on the critical path.
 
 ### Epic 1.5 — First-run wizard + permissions (macOS first)
 - Tauri wizard: Welcome → Continue with Google → grant Screen Recording →
@@ -175,9 +187,17 @@ without a terminal.
   (PipeWire/X11/Wayland capture consent) flows, mirroring macOS.
 - Installer detects missing permissions and offers one-click guidance.
 
-### Epic 2.4 — Status & diagnostics
-- UI: connection status, last error, “copy diagnostics” bundle (logs + versions).
-- Structured health endpoint on the service IPC; surface `frame stream stats`.
+### Epic 2.4 — Status & diagnostics (partially done)
+- ✅ Structured status over the service IPC, surfaced by `desksync-agent status`:
+  version, uptime, sign-in, device id, backend URL, capture settings, whether
+  frames are being produced, active sessions, and the last error. "Producing
+  frames: no" is called out explicitly because on macOS that is the signature of a
+  missing Screen Recording grant.
+- ✅ Stale-session fix found via this command: the backend served **every** session
+  stuck in `connecting`, so an agent restart answered a backlog of zombies (10 on
+  the live box), each costing a signaling connection and a WebRTC peer.
+  `PendingSessionsForDevice` is now bounded by `PendingSessionMaxAge`.
+- Remaining: `frame stream stats` over IPC, and a "copy diagnostics" bundle.
 
 **Phase 2 exit criteria:** self-updating, trusted-device connect without QR, and
 clear status/diagnostics on all three desktop OSes.

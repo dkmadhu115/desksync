@@ -19,6 +19,9 @@ type fakeRepo struct {
 	pairingErr error
 	created    domain.Session
 	events     []string
+	// The age window the service asked for, so tests can assert that stale
+	// sessions are excluded at the source rather than filtered later.
+	pendingMaxAge time.Duration
 }
 
 func (f *fakeRepo) PairingForUser(_ context.Context, _, _ string) (domain.Pairing, error) {
@@ -44,7 +47,13 @@ func (f *fakeRepo) ListSessions(_ context.Context, _ string, _ int) ([]domain.Se
 	return []domain.Session{f.created}, nil
 }
 
-func (f *fakeRepo) PendingSessionsForDevice(_ context.Context, _, _ string, _ int) ([]domain.Session, error) {
+func (f *fakeRepo) PendingSessionsForDevice(
+	_ context.Context,
+	_, _ string,
+	maxAge time.Duration,
+	_ int,
+) ([]domain.Session, error) {
+	f.pendingMaxAge = maxAge
 	if f.created.ID == "" {
 		return nil, nil
 	}
@@ -180,6 +189,24 @@ func TestPendingForDeviceIssuesAgentTickets(t *testing.T) {
 	}
 	if len(pending[0].ICEServers) == 0 {
 		t.Fatal("expected ICE servers in the pending response")
+	}
+}
+
+// Abandoned handshakes stay in 'connecting' forever, and answering one costs the
+// agent a signaling connection plus a WebRTC peer. The service must therefore ask
+// for a bounded window rather than every connecting row.
+func TestPendingForDeviceExcludesStaleSessions(t *testing.T) {
+	repo := &fakeRepo{created: domain.Session{ID: "sess-1", Status: domain.StatusConnecting}}
+	svc := newService(t, repo)
+
+	if _, err := svc.PendingForDevice(context.Background(), "user-1", "desktop-1"); err != nil {
+		t.Fatalf("PendingForDevice: %v", err)
+	}
+	if repo.pendingMaxAge != PendingSessionMaxAge {
+		t.Fatalf("pending window = %v, want %v", repo.pendingMaxAge, PendingSessionMaxAge)
+	}
+	if repo.pendingMaxAge <= 0 {
+		t.Fatal("an unbounded window would re-answer dead sessions on every poll")
 	}
 }
 
