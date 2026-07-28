@@ -133,7 +133,6 @@ impl AgentPeer {
                     urls: s.urls,
                     username: s.username,
                     credential: s.credential,
-                    ..Default::default()
                 })
                 .collect(),
             ..Default::default()

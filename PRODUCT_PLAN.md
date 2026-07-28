@@ -92,24 +92,42 @@ device registration. macOS first (our live test box), then Windows, then Linux.
   a token) sits at rest between the two legs.
 - `desksync-agent login` uses the browser by default; `login --password` keeps the
   env-based path for CI/headless.
-- **Remaining for full acceptance:** have the heartbeat/session runtime read the
-  stored tokens (currently still env-driven) — folded into Epic 1.3.
 
-### Epic 1.3 — Automatic device registration
-- On first authenticated start with no `device_id`: generate identity (exists),
-  register the device (exists), persist `device_id` to config + keychain, start
-  heartbeat. No user action, no QR required.
-- **Acceptance:** fresh install → sign in → device shows **online** on mobile
-  within one heartbeat interval, zero manual steps.
+### Epic 1.3 — Automatic device registration + token-driven runtime ✅
+- `desksync-backend::AuthSession` is the single authenticated view of the backend.
+  It owns the whole token lifecycle: try → on `401` rotate the refresh token →
+  retry once → persist the new pair. A password fallback is used only when
+  supplied (CI); otherwise a dead refresh token produces "run `login` again"
+  rather than a silent stall.
+- `config-ui::agent_auth::bootstrap` resolves credentials in preference order —
+  keychain (normal), `DESKSYNC_EMAIL`/`DESKSYNC_PASSWORD` (CI), neither (runs
+  signed-out and says so) — then registers this desktop if it has no `device_id`,
+  persisting the assigned id to **both** `config.json` and the credential bundle.
+- The heartbeat and the session runtime now take an `AuthSession`; neither reads
+  the environment or handles tokens. `reauth()` in `session_runtime` is gone.
+- `pair` no longer needs environment variables, and `login` registers the desktop
+  immediately so it appears in the mobile app without waiting for a daemon start.
+- **Acceptance:** fresh install → `login` → device registers and reports presence
+  with zero manual steps; token expiry is invisible to every call site.
 
-### Epic 1.4 — Service/UI split + background service
-- Extract the current `config-ui/main.rs` runtime into a `desksync-service` binary
-  (headless) and add a `desksync-ui` Tauri app.
-- Service installers register: launchd `~/Library/LaunchAgents/com.desksync.agent.plist`
-  (macOS), `systemd --user` unit (Linux), Windows Service (Windows).
-- Keep `SingleInstance` guard; add graceful stop + restart hooks.
-- **Acceptance:** closing the UI leaves the service running and connectable;
-  service auto-starts on login.
+### Epic 1.4 — Background service ✅ (service/UI split deferred)
+- `desksync-core::ServiceManager` installs the agent as a real per-user service:
+  writes the platform entry, **activates it immediately** via `launchctl bootstrap`
+  (falling back to `load -w`), and reports liveness with `launchctl print`. On
+  Linux/Windows the entry is written and `install` honestly reports
+  `PendingLogin` instead of claiming the service is up.
+- The launchd job now sets `ProcessType=Background` and redirects stdout/stderr to
+  `~/Library/Logs/DeskSync/agent.log`, because a login-started service has no
+  terminal and "why isn't it working" is always the first question.
+- CLI: `service install | status | restart | uninstall`. Unknown arguments are now
+  an error — previously any typo silently started the daemon instead.
+- The daemon reconciles only the *entry* (`reconcile_entry`), never activation, so
+  it cannot bootout the job it is running as; a test pins that the entry it writes
+  is byte-identical to the one `install` writes.
+- **Deferred:** extracting a separate `desksync-service` binary + Tauri
+  `desksync-ui`. The service now behaves correctly as a single binary, and the
+  current product direction is CLI-on-desktop + app-on-phone, so the UI split is
+  not on the critical path.
 
 ### Epic 1.5 — First-run wizard + permissions (macOS first)
 - Tauri wizard: Welcome → Continue with Google → grant Screen Recording →

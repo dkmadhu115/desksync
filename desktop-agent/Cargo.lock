@@ -823,6 +823,7 @@ dependencies = [
  "desksync-media",
  "desksync-transport",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

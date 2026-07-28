@@ -19,6 +19,7 @@ pub mod config;
 pub mod error;
 pub mod identity;
 pub mod secret;
+pub mod service;
 pub mod single_instance;
 pub mod store;
 pub mod subsystem;
@@ -31,6 +32,7 @@ pub use secret::{
     clear_tokens, default_secret_store, load_tokens, save_tokens, FileSecretStore, SecretStore, TokenBundle,
     SECRET_SERVICE, TOKENS_KEY,
 };
+pub use service::{Activation, ServiceManager, ServiceStatus};
 pub use single_instance::SingleInstance;
 pub use store::AgentStore;
 pub use subsystem::{HealthStatus, Subsystem};

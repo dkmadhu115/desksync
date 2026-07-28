@@ -1,10 +1,13 @@
 //! Backend REST client for the DeskSync desktop agent.
 //!
-//! This crate lets a headless agent enroll itself against the backend:
-//! authenticate with the auth service, register this desktop as a device
-//! (uploading only its public key), and initiate a pairing that the user
-//! confirms from their phone. It also renders the pairing QR code for the
-//! terminal.
+//! This crate lets a headless agent enroll itself against the backend: sign in
+//! (Google via the system browser, or password credentials for CI), register this
+//! desktop as a device (uploading only its public key), and initiate a pairing
+//! that the user confirms from their phone. It also renders the pairing QR code
+//! for the terminal.
+//!
+//! [`AuthSession`] is the entry point for anything authenticated — it owns token
+//! rotation and persistence so callers never handle tokens themselves.
 //!
 //! It is intentionally independent of the capture/input/transport crates and
 //! uses rustls (pure Rust TLS) so it builds and is unit-tested on headless CI.
@@ -12,20 +15,20 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod auth;
 pub mod client;
-pub mod enrollment;
 pub mod error;
 pub mod models;
 pub mod oauth;
 pub mod qr;
 
+pub use auth::{AuthSession, Credentials, TokenSink};
 pub use client::{BackendApi, BackendClient};
-pub use enrollment::{Credentials, DeviceProfile, Enrollment, EnrollmentOutcome};
 pub use error::{BackendError, Result};
-pub use oauth::{google_login, login_with_provider, PkcePair, DEFAULT_LOGIN_TIMEOUT};
 pub use models::{
     Device, DeviceRegistration, IceServer, PairingChallenge, PendingSession, PendingSessions, SessionRef, TokenPair,
 };
+pub use oauth::{google_login, login_with_provider, PkcePair, DEFAULT_LOGIN_TIMEOUT};
 pub use qr::render_qr;
 
 /// Map the host OS to the backend's device `platform` enum

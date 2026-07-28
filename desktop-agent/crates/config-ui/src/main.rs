@@ -17,20 +17,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
-use desksync_backend::{
-    detect_device_name, detect_platform, render_qr, BackendApi, BackendClient, Credentials, DeviceProfile,
-    Enrollment,
-};
+use desksync_backend::{render_qr, AuthSession, BackendApi, BackendClient, Credentials};
 use desksync_capture::{CaptureLoop, CaptureSettings, ScreenCapturer};
 use desksync_core::identity::DeviceIdentity;
 use desksync_core::subsystem::Subsystem;
 use desksync_core::{
-    clear_tokens, default_secret_store, save_tokens, Agent, AgentConfig, AgentStore, Autostart, SingleInstance,
-    TokenBundle,
+    clear_tokens, default_secret_store, save_tokens, Activation, Agent, AgentConfig, AgentStore, ServiceManager,
+    SingleInstance, TokenBundle,
 };
 use desksync_devtools::{DevToolsService, SshHost, SshHostRegistry, TokioCommandRunner, Workspace, WorkspaceRegistry};
 use desksync_input::{Clipboard, InputInjector, InputRouter};
 
+mod agent_auth;
 #[cfg(feature = "native")]
 mod session_runtime;
 
@@ -93,49 +91,33 @@ fn make_clipboard() -> Arc<dyn Clipboard> {
 
 const BACKEND_KIND: &str = if cfg!(feature = "native") { "native" } else { "noop" };
 
-/// Enroll this desktop and initiate a pairing, printing a scannable QR code and
-/// the manual fallback code. Runs without the single-instance lock so it can be
-/// used while the daemon is running. Credentials come from
-/// `DESKSYNC_EMAIL`/`DESKSYNC_PASSWORD`; the REST base URL from `config.api_url`.
+/// Initiate a pairing for this desktop, printing a scannable QR code and the
+/// manual fallback code. Runs without the single-instance lock so it can be used
+/// while the daemon is running.
+///
+/// Uses stored credentials when available (so no environment variables are
+/// needed) and registers the desktop first if it isn't registered yet.
 async fn run_pairing(store: &AgentStore, config: &AgentConfig, identity: &DeviceIdentity) -> anyhow::Result<()> {
-    let creds = Credentials::from_env()?;
-    let client = BackendClient::new(&config.api_url).context("building backend client")?;
-    let enrollment = Enrollment::new(Arc::new(client));
-
-    let profile = DeviceProfile {
-        platform: detect_platform(),
-        name: detect_device_name(),
-        public_key: identity.public_base64(),
+    let Some(agent) = agent_auth::bootstrap(store, config, identity).await? else {
+        bail!("not signed in — run `desksync-agent login` first");
     };
 
-    let outcome = enrollment.run(&creds, profile).await.context("enrollment failed")?;
+    let challenge = agent
+        .session
+        .initiate_pairing(&agent.device_id)
+        .await
+        .context("initiating pairing")?;
 
-    // Persist the server-assigned device id so subsequent runs reuse it.
-    let mut updated = config.clone();
-    updated.device_id = outcome.device_id.clone();
-    if let Err(e) = store.save_config(&updated) {
-        tracing::warn!(error = %e, "failed to persist device id after pairing");
-    }
-
-    let qr = render_qr(&outcome.challenge.qr_payload).context("rendering pairing QR")?;
+    let qr = render_qr(&challenge.qr_payload).context("rendering pairing QR")?;
     println!("\nScan this QR code with the DeskSync mobile app:\n\n{qr}");
     println!("Or enter the pairing details manually:");
-    println!("  Pairing ID: {}", outcome.challenge.pairing_id);
-    println!("  Code:       {}", outcome.challenge.manual_code);
-    if !outcome.challenge.expires_at.is_empty() {
-        println!("  Expires at: {}", outcome.challenge.expires_at);
+    println!("  Pairing ID: {}", challenge.pairing_id);
+    println!("  Code:       {}", challenge.manual_code);
+    if !challenge.expires_at.is_empty() {
+        println!("  Expires at: {}", challenge.expires_at);
     }
-    println!("\nRegistered device id: {}\n", outcome.device_id);
+    println!("\nRegistered device id: {}\n", agent.device_id);
     Ok(())
-}
-
-/// Human-readable label for where secrets are persisted in this build.
-fn secret_backend_label() -> &'static str {
-    if cfg!(feature = "native") {
-        "the OS keychain"
-    } else {
-        "an owner-only file"
-    }
 }
 
 /// Authenticate and persist the resulting tokens (+ current device id) to the OS
@@ -144,7 +126,12 @@ fn secret_backend_label() -> &'static str {
 /// Sign-in goes through the system browser (Google) by default, which is the
 /// path a real user takes. `login --password` keeps the email/password flow for
 /// CI and headless boxes, reading `DESKSYNC_EMAIL`/`DESKSYNC_PASSWORD`.
-async fn run_login(store: &AgentStore, config: &AgentConfig, mode: LoginMode) -> anyhow::Result<()> {
+async fn run_login(
+    store: &AgentStore,
+    config: &AgentConfig,
+    identity: &DeviceIdentity,
+    mode: LoginMode,
+) -> anyhow::Result<()> {
     let tokens = match mode {
         LoginMode::Browser => desksync_backend::google_login(&config.api_url)
             .await
@@ -166,8 +153,18 @@ async fn run_login(store: &AgentStore, config: &AgentConfig, mode: LoginMode) ->
         device_id: config.device_id.clone(),
     };
     save_tokens(secrets.as_ref(), &bundle).context("persisting credentials")?;
+    println!(
+        "Signed in. Credentials stored securely in {}.",
+        agent_auth::secret_backend_label()
+    );
 
-    println!("Signed in. Credentials stored securely in {}.", secret_backend_label());
+    // Sign-in is also enrollment: register the desktop now so it shows up in the
+    // mobile app immediately instead of on the next daemon start.
+    match agent_auth::bootstrap(store, config, identity).await {
+        Ok(Some(agent)) => println!("This desktop is registered as device {}.", agent.device_id),
+        Ok(None) => {}
+        Err(e) => println!("Signed in, but registering this desktop failed: {e:#}"),
+    }
     Ok(())
 }
 
@@ -184,8 +181,90 @@ enum LoginMode {
 fn run_logout(store: &AgentStore) -> anyhow::Result<()> {
     let secrets = default_secret_store(store.dir());
     clear_tokens(secrets.as_ref()).context("clearing credentials")?;
-    println!("Signed out. Stored credentials removed from {}.", secret_backend_label());
+    println!(
+        "Signed out. Stored credentials removed from {}.",
+        agent_auth::secret_backend_label()
+    );
     Ok(())
+}
+
+/// Install, remove, or inspect the background service.
+///
+/// Installing makes the agent behave like a product rather than a terminal
+/// command: it survives closing the shell, restarts if it crashes, comes back at
+/// login, and writes its logs to a fixed path.
+fn run_service(action: Option<&str>) -> anyhow::Result<()> {
+    let manager = ServiceManager::for_current_exe().context("resolving service paths")?;
+
+    match action {
+        Some("install") => {
+            let activation = manager.install().context("installing the background service")?;
+            match activation {
+                Activation::Started => println!("Background service installed and running."),
+                Activation::PendingLogin => {
+                    println!("Background service installed. It starts automatically at your next login.");
+                }
+            }
+            println!("  Service entry: {}", manager.entry_path().display());
+            if let Some(log) = manager.log_path() {
+                println!("  Logs:          {}", log.display());
+            }
+            // The installed entry points at this exact binary, and macOS ties
+            // screen-recording consent to the binary itself — so a rebuilt or
+            // moved executable needs a re-install and a fresh permission grant.
+            println!(
+                "  Executable:    {}",
+                std::env::current_exe()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| "unknown".into())
+            );
+            println!("\nRe-run `service install` after replacing the executable.");
+        }
+        Some("uninstall") => {
+            manager.uninstall().context("removing the background service")?;
+            println!("Background service stopped and removed.");
+        }
+        Some("restart") => {
+            manager.restart().context("restarting the background service")?;
+            println!("Background service restarted.");
+        }
+        Some("status") => {
+            let status = manager.status();
+            println!(
+                "Installed: {}",
+                if status.installed { "yes" } else { "no" }
+            );
+            match status.running {
+                Some(true) => println!("Running:   yes"),
+                Some(false) => println!("Running:   no"),
+                None => println!("Running:   unknown (starts at login on this platform)"),
+            }
+            println!("Entry:     {}", status.entry_path.display());
+            if let Some(log) = manager.log_path() {
+                println!("Logs:      {}", log.display());
+            }
+        }
+        _ => bail!("usage: desksync-agent service <install|uninstall|restart|status>"),
+    }
+    Ok(())
+}
+
+/// Print the command surface. Kept short: the daemon is the default mode and the
+/// rest are one-shot administrative commands.
+fn print_usage() {
+    println!(
+        "DeskSync desktop agent\n\n\
+         Usage:\n\
+         \x20 desksync-agent                    run the agent in the foreground\n\
+         \x20 desksync-agent login              sign in with Google via your browser\n\
+         \x20 desksync-agent login --password   sign in with DESKSYNC_EMAIL/DESKSYNC_PASSWORD\n\
+         \x20 desksync-agent logout             remove stored credentials\n\
+         \x20 desksync-agent pair               show a pairing QR code for the mobile app\n\
+         \x20 desksync-agent service install    run in the background, starting at login\n\
+         \x20 desksync-agent service status     show whether the service is installed/running\n\
+         \x20 desksync-agent service restart    restart the background service\n\
+         \x20 desksync-agent service uninstall  stop and remove the background service\n"
+    );
 }
 
 /// Load a JSON array of registry items from `<config-dir>/<file>`, returning an
@@ -234,69 +313,20 @@ fn build_devtools(store: &AgentStore) -> DevToolsService {
 }
 
 /// Spawn a background task that keeps this device marked "online" by sending
-/// periodic heartbeats to the backend. Credentials come from
-/// `DESKSYNC_EMAIL`/`DESKSYNC_PASSWORD`; the device id and REST base URL from
-/// the persisted config. If the device is not yet paired or credentials are
-/// absent, heartbeats are skipped (the device will simply show offline).
-fn spawn_heartbeat(config: &AgentConfig) {
-    let device_id = config.device_id.clone();
-    if device_id.trim().is_empty() || device_id == "unregistered" {
-        tracing::warn!("device not registered yet; skipping heartbeats (run `pair` first)");
-        return;
-    }
-    let creds = match Credentials::from_env() {
-        Ok(c) => c,
-        Err(_) => {
-            tracing::warn!(
-                "DESKSYNC_EMAIL/DESKSYNC_PASSWORD not set; skipping heartbeats (device will show offline)"
-            );
-            return;
-        }
-    };
-    let api_url = config.api_url.clone();
-    let interval = config.heartbeat_secs.max(5);
-
+/// periodic heartbeats. Token rotation is handled by the [`AuthSession`], so a
+/// failure here is transient (network/backend) and simply retried next tick.
+fn spawn_heartbeat(session: Arc<AuthSession>, device_id: String, interval_secs: u64) {
+    let interval = interval_secs.max(5);
     tokio::spawn(async move {
-        let client = match BackendClient::new(&api_url) {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::error!(error = %e, "heartbeat: failed to build backend client");
-                return;
-            }
-        };
-        // Authenticate once up front; refresh/re-login on demand below.
-        let mut tokens = match client.login(&creds.email, &creds.password).await {
-            Ok(t) => {
-                tracing::info!(device_id = %device_id, "heartbeat: authenticated; reporting presence");
-                t
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "heartbeat: initial login failed");
-                return;
-            }
-        };
-
+        tracing::info!(device_id = %device_id, interval_secs = interval, "reporting presence");
         let mut ticker = tokio::time::interval(Duration::from_secs(interval));
-        // Send an immediate first heartbeat, then on each tick.
+        // interval() fires immediately on the first tick, so presence is
+        // reported as soon as the daemon is up.
         loop {
-            if client.heartbeat(&tokens.access_token, &device_id).await.is_err() {
-                // Access token likely expired: rotate the refresh token, or
-                // fall back to a full re-login, then retry once.
-                let refreshed = match client.refresh(&tokens.refresh_token).await {
-                    Ok(t) => Some(t),
-                    Err(_) => client.login(&creds.email, &creds.password).await.ok(),
-                };
-                match refreshed {
-                    Some(t) => {
-                        tokens = t;
-                        if let Err(e) = client.heartbeat(&tokens.access_token, &device_id).await {
-                            tracing::warn!(error = %e, "heartbeat failed after re-auth; will retry");
-                        }
-                    }
-                    None => tracing::warn!("heartbeat: re-authentication failed; will retry"),
-                }
-            }
             ticker.tick().await;
+            if let Err(e) = session.heartbeat(&device_id).await {
+                tracing::warn!(error = %e, "heartbeat failed; will retry");
+            }
         }
     });
 }
@@ -317,23 +347,31 @@ async fn main() -> anyhow::Result<()> {
     let identity = store.load_or_create_identity().context("loading device identity")?;
 
     // One-shot subcommands run before the single-instance lock so they can be
-    // used while the daemon is active:
-    //   pair               enroll + initiate pairing (prints a QR)
-    //   login              Google sign-in via the browser; stores credentials
-    //   login --password   email/password from the environment (CI/headless)
-    //   logout             remove stored credentials
-    match std::env::args().nth(1).as_deref() {
+    // used while the daemon is active. Running with no arguments starts the
+    // daemon; an unrecognized argument is an error rather than a silent daemon
+    // start, which would otherwise swallow typos like `serivce install`.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
         Some("pair") => return run_pairing(&store, &config, &identity).await,
         Some("login") => {
-            let mode = if std::env::args().any(|a| a == "--password") {
+            let mode = if args.iter().any(|a| a == "--password") {
                 LoginMode::Password
             } else {
                 LoginMode::Browser
             };
-            return run_login(&store, &config, mode).await;
+            return run_login(&store, &config, &identity, mode).await;
         }
         Some("logout") => return run_logout(&store),
-        _ => {}
+        Some("service") => return run_service(args.get(1).map(String::as_str)),
+        Some("help" | "--help" | "-h") => {
+            print_usage();
+            return Ok(());
+        }
+        Some(other) => {
+            print_usage();
+            bail!("unknown command `{other}`");
+        }
+        None => {}
     }
 
     // Single-instance guard for the daemon. Held for the life of the process.
@@ -344,13 +382,9 @@ async fn main() -> anyhow::Result<()> {
         };
 
     // Reconcile launch-at-login with the configured preference (best-effort).
-    if let Ok(autostart) = Autostart::for_current_exe() {
-        let result = if config.autostart {
-            autostart.enable()
-        } else {
-            autostart.disable()
-        };
-        if let Err(e) = result {
+    // Entry-only: the service must not start or stop itself here.
+    if let Ok(service) = ServiceManager::for_current_exe() {
+        if let Err(e) = service.reconcile_entry(config.autostart) {
             tracing::warn!(error = %e, enabled = config.autostart, "failed to reconcile autostart");
         }
     }
@@ -408,28 +442,47 @@ async fn main() -> anyhow::Result<()> {
     // the (possibly permission-degraded) native backend.
     let input_router = Arc::new(InputRouter::new(Arc::clone(&injector), make_clipboard()));
 
+    // Sign-in state: stored keychain credentials (from `desksync-agent login`),
+    // or password credentials in the environment for CI. With neither, the agent
+    // still runs locally — it just can't report presence or accept sessions,
+    // which is recoverable by signing in and restarting.
+    let account = match agent_auth::bootstrap(&store, &config, &identity).await {
+        Ok(Some(account)) => Some(account),
+        Ok(None) => {
+            tracing::warn!("not signed in; run `desksync-agent login` to connect this desktop to your account");
+            None
+        }
+        Err(e) => {
+            tracing::error!(error = format!("{e:#}"), "sign-in failed; continuing without backend connectivity");
+            None
+        }
+    };
+
     // Keep the device marked "online" in the backend while the daemon runs.
-    spawn_heartbeat(&config);
+    if let Some(account) = &account {
+        spawn_heartbeat(
+            Arc::clone(&account.session),
+            account.device_id.clone(),
+            config.heartbeat_secs,
+        );
+    }
 
     // Serve incoming remote-control sessions: discover them from the backend,
     // answer over WebRTC, stream the screen, and route input/control frames.
     #[cfg(feature = "native")]
     {
-        match Credentials::from_env() {
-            Ok(creds) => {
+        match &account {
+            Some(account) => {
                 let manager = Arc::new(session_runtime::SessionManager::new(
-                    config.api_url.clone(),
-                    config.device_id.clone(),
-                    creds,
+                    Arc::clone(&account.session),
+                    account.device_id.clone(),
                     Arc::clone(&capture_loop),
                     Arc::clone(&input_router),
                     Arc::clone(&devtools),
                 ));
                 tokio::spawn(manager.run());
             }
-            Err(_) => tracing::warn!(
-                "DESKSYNC_EMAIL/DESKSYNC_PASSWORD not set; incoming remote sessions are disabled"
-            ),
+            None => tracing::warn!("incoming remote sessions are disabled until you sign in"),
         }
     }
     #[cfg(not(feature = "native"))]

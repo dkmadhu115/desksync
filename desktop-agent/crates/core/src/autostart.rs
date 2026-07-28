@@ -23,6 +23,7 @@ pub const LABEL: &str = "com.desksync.agent";
 pub struct Autostart {
     exec_path: PathBuf,
     dir: PathBuf,
+    log_dir: Option<PathBuf>,
 }
 
 impl Autostart {
@@ -31,6 +32,7 @@ impl Autostart {
         Self {
             exec_path: exec_path.into(),
             dir: dir.into(),
+            log_dir: None,
         }
     }
 
@@ -42,9 +44,24 @@ impl Autostart {
         Ok(Self::with_dir(exec, dir))
     }
 
+    /// Redirect the started process's output into `dir`.
+    ///
+    /// A service started at login has no terminal, so without this its logs are
+    /// discarded and failures are invisible. Only the platforms whose autostart
+    /// mechanism supports redirection (launchd) honour this.
+    pub fn with_logs(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.log_dir = Some(dir.into());
+        self
+    }
+
     /// The full path to the autostart entry file.
     pub fn entry_path(&self) -> PathBuf {
         self.dir.join(entry_file_name())
+    }
+
+    /// Where the service's stdout/stderr are written, if configured.
+    pub fn log_path(&self) -> Option<PathBuf> {
+        self.log_dir.as_ref().map(|d| d.join("agent.log"))
     }
 
     /// Whether the autostart entry currently exists.
@@ -54,12 +71,17 @@ impl Autostart {
 
     /// The textual content of the autostart entry for this platform.
     pub fn entry_contents(&self) -> String {
-        render_entry(&self.exec_path)
+        render_entry(&self.exec_path, self.log_path().as_deref())
     }
 
     /// Create the autostart entry (idempotent).
     pub fn enable(&self) -> Result<()> {
         fs::create_dir_all(&self.dir)?;
+        if let Some(log_dir) = &self.log_dir {
+            // launchd will not create the directory for its log paths, and a
+            // missing one makes the job fail to spawn.
+            fs::create_dir_all(log_dir)?;
+        }
         fs::write(self.entry_path(), self.entry_contents())?;
         Ok(())
     }
@@ -92,7 +114,17 @@ fn entry_file_name() -> String {
 }
 
 #[cfg(target_os = "macos")]
-fn render_entry(exec: &Path) -> String {
+fn render_entry(exec: &Path, log: Option<&Path>) -> String {
+    // ProcessType=Background tells the scheduler this is a long-running daemon
+    // rather than an interactive app, so it isn't throttled as aggressively.
+    let logging = match log {
+        Some(path) => format!(
+            "    <key>StandardOutPath</key>\n    <string>{path}</string>\n\
+             \x20   <key>StandardErrorPath</key>\n    <string>{path}</string>\n",
+            path = path.display()
+        ),
+        None => String::new(),
+    };
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -108,7 +140,9 @@ fn render_entry(exec: &Path) -> String {
     <true/>
     <key>KeepAlive</key>
     <true/>
-</dict>
+    <key>ProcessType</key>
+    <string>Background</string>
+{logging}</dict>
 </plist>
 "#,
         exec = exec.display()
@@ -116,25 +150,37 @@ fn render_entry(exec: &Path) -> String {
 }
 
 #[cfg(target_os = "linux")]
-fn render_entry(exec: &Path) -> String {
+fn render_entry(exec: &Path, log: Option<&Path>) -> String {
+    // XDG autostart has no log redirection, so wrap the command in a shell when
+    // a log path is configured.
+    let command = match log {
+        Some(path) => format!("sh -c '\"{exec}\" >> \"{log}\" 2>&1'", exec = exec.display(), log = path.display()),
+        None => exec.display().to_string(),
+    };
     format!(
         "[Desktop Entry]\n\
          Type=Application\n\
          Name=DeskSync Agent\n\
-         Exec={exec}\n\
+         Exec={command}\n\
          Terminal=false\n\
-         X-GNOME-Autostart-enabled=true\n",
-        exec = exec.display()
+         X-GNOME-Autostart-enabled=true\n"
     )
 }
 
 #[cfg(target_os = "windows")]
-fn render_entry(exec: &Path) -> String {
-    format!("@echo off\r\nstart \"\" \"{exec}\"\r\n", exec = exec.display())
+fn render_entry(exec: &Path, log: Option<&Path>) -> String {
+    match log {
+        Some(path) => format!(
+            "@echo off\r\nstart \"\" /b \"{exec}\" >> \"{log}\" 2>&1\r\n",
+            exec = exec.display(),
+            log = path.display()
+        ),
+        None => format!("@echo off\r\nstart \"\" \"{exec}\"\r\n", exec = exec.display()),
+    }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn render_entry(exec: &Path) -> String {
+fn render_entry(exec: &Path, _log: Option<&Path>) -> String {
     format!("exec={}\n", exec.display())
 }
 
@@ -197,5 +243,27 @@ mod tests {
     fn entry_path_is_under_target_dir() {
         let auto = Autostart::with_dir("/bin/x", "/tmp/autostart-dir");
         assert!(auto.entry_path().starts_with("/tmp/autostart-dir"));
+    }
+
+    #[test]
+    fn configured_logs_appear_in_the_entry() {
+        let auto = Autostart::with_dir("/bin/desksync-agent", "/tmp/d").with_logs("/tmp/logs");
+        assert_eq!(auto.log_path().unwrap(), Path::new("/tmp/logs/agent.log"));
+        assert!(
+            auto.entry_contents().contains("/tmp/logs/agent.log"),
+            "a login-started service has no terminal, so the entry must redirect output: {}",
+            auto.entry_contents()
+        );
+    }
+
+    #[test]
+    fn enable_creates_the_log_directory() {
+        // launchd refuses to spawn a job whose log directory is missing.
+        let dir = tempdir().unwrap();
+        let logs = dir.path().join("logs");
+        let auto = Autostart::with_dir("/bin/desksync-agent", dir.path().join("agents")).with_logs(&logs);
+
+        auto.enable().unwrap();
+        assert!(logs.is_dir());
     }
 }

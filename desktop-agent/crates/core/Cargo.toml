@@ -28,7 +28,6 @@ fs4.workspace = true
 dirs.workspace = true
 # OS-native credential storage (optional; enabled via the `os-keychain` feature).
 keyring = { version = "3", optional = true, features = ["apple-native", "windows-native", "sync-secret-service"] }
-
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
 tempfile = "3"

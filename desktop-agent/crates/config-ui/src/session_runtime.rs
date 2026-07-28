@@ -10,14 +10,14 @@
 //! 3. Streams JPEG-encoded screen frames over the `frames` data channel and
 //!    dispatches inbound `input`/`control` frames to the injector and dev-tools.
 //!
-//! Authentication reuses the same account credentials as pairing/heartbeats
-//! (`DESKSYNC_EMAIL`/`DESKSYNC_PASSWORD`), refreshing/rotating tokens as needed.
+//! Authentication rides on the shared [`AuthSession`], which owns token rotation
+//! and persistence, so this module never sees credentials.
 
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use desksync_backend::{BackendApi, BackendClient, Credentials, PendingSession, TokenPair};
+use desksync_backend::{AuthSession, PendingSession};
 use desksync_capture::CaptureLoop;
 use desksync_devtools::DevToolsService;
 use desksync_input::InputRouter;
@@ -37,9 +37,8 @@ const MAX_BUFFERED: usize = 2 * 1024 * 1024;
 
 /// Everything the runtime needs to serve sessions.
 pub struct SessionManager {
-    api_url: String,
+    auth: Arc<AuthSession>,
     device_id: String,
-    creds: Credentials,
     capture: Arc<CaptureLoop>,
     input: Arc<InputRouter>,
     devtools: Arc<DevToolsService>,
@@ -48,17 +47,15 @@ pub struct SessionManager {
 impl SessionManager {
     /// Build a session manager.
     pub fn new(
-        api_url: String,
+        auth: Arc<AuthSession>,
         device_id: String,
-        creds: Credentials,
         capture: Arc<CaptureLoop>,
         input: Arc<InputRouter>,
         devtools: Arc<DevToolsService>,
     ) -> Self {
         Self {
-            api_url,
+            auth,
             device_id,
-            creds,
             capture,
             input,
             devtools,
@@ -67,21 +64,6 @@ impl SessionManager {
 
     /// Run the discovery loop forever. Intended to be spawned as a task.
     pub async fn run(self: Arc<Self>) {
-        let client = match BackendClient::new(&self.api_url) {
-            Ok(c) => Arc::new(c),
-            Err(e) => {
-                tracing::error!(error = %e, "session runtime: failed to build backend client");
-                return;
-            }
-        };
-
-        let mut tokens = match client.login(&self.creds.email, &self.creds.password).await {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::error!(error = %e, "session runtime: initial login failed");
-                return;
-            }
-        };
         tracing::info!(device_id = %self.device_id, "session runtime ready; watching for incoming sessions");
 
         let active: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
@@ -89,14 +71,12 @@ impl SessionManager {
         loop {
             tokio::time::sleep(POLL_INTERVAL).await;
 
-            let pending = match client.pending_sessions(&tokens.access_token, &self.device_id).await {
+            let pending = match self.auth.pending_sessions(&self.device_id).await {
                 Ok(p) => p,
-                Err(_) => {
-                    // Most likely an expired access token; rotate and retry next tick.
-                    tokens = match reauth(&client, &self.creds, &tokens).await {
-                        Some(t) => t,
-                        None => tokens,
-                    };
+                Err(e) => {
+                    // Transient: expired tokens are already rotated inside the
+                    // session, so this is a network/backend blip. Retry next tick.
+                    tracing::debug!(error = %e, "polling for pending sessions failed");
                     continue;
                 }
             };
@@ -303,12 +283,4 @@ impl SessionManager {
             }
         }
     }
-}
-
-/// Rotate the access token via refresh, falling back to a full re-login.
-async fn reauth(client: &BackendClient, creds: &Credentials, tokens: &TokenPair) -> Option<TokenPair> {
-    if let Ok(t) = client.refresh(&tokens.refresh_token).await {
-        return Some(t);
-    }
-    client.login(&creds.email, &creds.password).await.ok()
 }

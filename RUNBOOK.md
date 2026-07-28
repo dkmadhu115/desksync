@@ -86,21 +86,49 @@ Without this, capture produces **blank** frames.
 cd desktop-agent
 cargo build -p desksync-agent --features native
 
-export DESKSYNC_EMAIL="dkmadhu2109@gmail.com"
-export DESKSYNC_PASSWORD="<account-password>"
-export RUST_LOG="info,desksync_media=trace,desksync_agent=info,webrtc_ice=warn"
-
-./target/debug/desksync-agent
+./target/debug/desksync-agent login    # once: Google sign-in in your browser
+./target/debug/desksync-agent          # run the agent
 ```
+
+`login` stores credentials in the keychain and registers this Mac as a device, so
+running the agent needs **no environment variables**. `DESKSYNC_EMAIL` /
+`DESKSYNC_PASSWORD` still work (`login --password`, and as an automatic fallback
+if a stored refresh token is ever rejected) — that path exists for CI.
 
 Healthy startup logs:
 
 ```
+using stored credentials from the OS keychain
+desktop registered automatically  device_id=...   ← first run only
 agent running; press Ctrl-C to stop
-heartbeat: authenticated; reporting presence
+reporting presence  device_id=... interval_secs=15
 session runtime ready; watching for incoming sessions
 capture pipeline produced first frame  width=... height=...
 ```
+
+For verbose troubleshooting: `RUST_LOG="info,desksync_media=trace,webrtc_ice=warn"`.
+
+### Run it in the background (survives closing the terminal)
+
+```bash
+./target/debug/desksync-agent service install    # starts now + at every login
+./target/debug/desksync-agent service status
+tail -f ~/Library/Logs/DeskSync/agent.log
+./desksync-agent service restart                 # after rebuilding the binary
+./desksync-agent service uninstall
+```
+
+`install` writes `~/Library/LaunchAgents/com.desksync.agent.plist` pointing at
+**the executable you ran it from**, and launchd restarts the agent if it exits.
+Two consequences on macOS:
+
+- Re-run `service install` after rebuilding or moving the binary.
+- Screen Recording consent is tied to that binary, so grant it to the agent
+  itself once installed (rather than to Cursor/Terminal). Replacing the binary
+  changes its signature and re-prompts.
+
+Stop the foreground agent before installing the service — the single-instance
+lock allows only one.
 
 When a phone connects you should see:
 
@@ -112,15 +140,21 @@ frame stream stats  sent:30  dropped:0   ← frames flowing (dropped≈0 is good
 ### Signing in (Google, via the browser)
 
 ```bash
-./target/debug/desksync-agent login       # opens the browser for Google sign-in
+./target/debug/desksync-agent login              # opens the browser for Google sign-in
 ./target/debug/desksync-agent login --password   # email/password from env (CI/headless)
-./target/debug/desksync-agent logout      # clears stored credentials
+./target/debug/desksync-agent logout             # clears stored credentials
 ```
 
 `login` stores the access token, refresh token, and device id in the **OS
 keychain** (macOS Keychain / Windows Credential Manager / Linux Secret Service) on
 `--features native` builds, or an owner-only `secrets.json` otherwise. Nothing
-sensitive is written to `config.json`.
+sensitive is written to `config.json`. It then registers this desktop, so the
+device appears in the mobile app right away.
+
+Access tokens are rotated automatically: any call that gets a `401` refreshes and
+retries once, and the new pair is written back to the keychain. If the refresh
+token itself is rejected (revoked, or expired after long downtime) the agent logs
+`session expired; run \`desksync-agent login\`` — re-run `login`.
 
 > **Google Cloud Console setup (one-time).** The desktop never holds the client
 > secret — it signs in *through* the backend. So the only authorized redirect URI
@@ -154,7 +188,9 @@ backend and controls capture quality:
 ```
 
 To re-point at a different backend, edit `backend_url` + `api_url`, set
-`device_id` to `unregistered`, and restart (it re-registers on next auth).
+`device_id` to `unregistered`, and restart — the agent re-registers automatically
+on the next authenticated start, no `pair` needed. `autostart: true` keeps the
+service entry installed; the running daemon never starts/stops itself.
 
 ---
 
