@@ -87,11 +87,7 @@ impl AuthSession {
 
     /// Authenticate with password credentials and build a session from the
     /// resulting pair, persisting it immediately.
-    pub async fn login(
-        api: Arc<dyn BackendApi>,
-        creds: Credentials,
-        sink: Option<Arc<dyn TokenSink>>,
-    ) -> Result<Self> {
+    pub async fn login(api: Arc<dyn BackendApi>, creds: Credentials, sink: Option<Arc<dyn TokenSink>>) -> Result<Self> {
         let tokens = api.login(&creds.email, &creds.password).await?;
         let session = Self::new(api, tokens, sink, Some(creds));
         session.persist().await;
@@ -368,7 +364,10 @@ mod tests {
             }),
         );
 
-        session.heartbeat("dev").await.expect("password fallback should recover");
+        session
+            .heartbeat("dev")
+            .await
+            .expect("password fallback should recover");
         assert_eq!(api.logins.load(Ordering::SeqCst), 1);
         assert_eq!(session.access_token().await, "access-3");
     }
@@ -381,7 +380,10 @@ mod tests {
         let session = AuthSession::new(Arc::clone(&api) as Arc<dyn BackendApi>, pair(1), None, None);
 
         let err = session.heartbeat("dev").await.unwrap_err();
-        assert!(err.to_string().contains("login"), "should tell the user what to do: {err}");
+        assert!(
+            err.to_string().contains("login"),
+            "should tell the user what to do: {err}"
+        );
         assert_eq!(api.logins.load(Ordering::SeqCst), 0, "no credentials to fall back to");
     }
 

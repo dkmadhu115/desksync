@@ -28,6 +28,7 @@ pub mod server;
 
 pub use client::request;
 pub use protocol::{
-    CaptureStatus, Envelope, IpcError, Request, Response, ServiceStatus, StatusSource, PROTOCOL_VERSION,
+    CaptureStatus, Envelope, IpcError, PermissionStatus, Request, Response, ServiceStatus, StatusSource,
+    PROTOCOL_VERSION,
 };
 pub use server::{listen, socket_path, token_path, IpcServer};

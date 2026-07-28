@@ -86,9 +86,15 @@ Without this, capture produces **blank** frames.
 cd desktop-agent
 cargo build -p desksync-agent --features native
 
-./target/debug/desksync-agent login    # once: Google sign-in in your browser
+./target/debug/desksync-agent setup    # once: sign in, permissions, registration
 ./target/debug/desksync-agent          # run the agent
 ```
+
+`setup` is the guided path: it signs you in, checks Screen Recording and
+Accessibility (opening the right System Settings pane for anything missing),
+registers this Mac, and offers to install the background service. It ends by
+naming whatever is still missing, so there is no guessing. `login` alone still
+works if you only want credentials.
 
 `login` stores credentials in the keychain and registers this Mac as a device, so
 running the agent needs **no environment variables**. `DESKSYNC_EMAIL` /
@@ -123,6 +129,10 @@ DeskSync service v0.1.0
   Active sessions: 0
   Uptime:          15s
   Last error:      none
+  Permissions:
+    Screen & System Audio Recording    granted
+    Accessibility                      granted
+    Notifications                      unknown
 ```
 
 This works whether the agent runs in the foreground or as the background service —
@@ -132,9 +142,34 @@ token). Read it as follows:
 | Line | What it tells you |
 |------|-------------------|
 | `Signed in: no` | run `login`; the device will show offline |
+| `Signed in: signing in…` | still reading credentials — a slow keychain read, not a failure |
 | `NO frames captured` | Screen Recording permission missing → blank frames |
+| `Permissions` | as seen by *this* binary; macOS grants consent per executable |
 | `Active sessions` | how many phones are connected right now |
 | `Last error` | the most recent failure, cleared on recovery |
+
+### Permissions
+
+```bash
+./target/debug/desksync-agent permissions
+```
+
+Reports what the OS actually grants this binary, what breaks without each one, and
+nothing it cannot verify (non-macOS builds say `unknown` rather than guessing).
+
+Two macOS behaviours cause most confusion:
+
+- **Consent is per executable.** Rebuilding the agent, or moving it, can require a
+  fresh grant — and after `service install`, the grant that matters is the one for
+  the installed path.
+- **Capture consent is read at process start.** Granting Screen Recording while the
+  agent is running does nothing until you restart it.
+
+A rebuilt binary also changes its signature, so macOS re-asks for **keychain**
+access on the next start. That read blocks until you answer (54 s was observed
+while a dialog waited); the agent logs `reading stored credentials was slow` when
+this happens. Choose *Always Allow* to stop the pause recurring. `status` works
+throughout, reporting `signing in…`.
 
 To try a build without disturbing the installed service, run it against a throwaway
 state directory — its own config, identity, instance lock, and socket:
@@ -379,7 +414,7 @@ video" to "connects and streams."
 ## 9. Resume checklist (fast path)
 
 1. **Backend up?** `ssh apollo@20.109.60.233` → `sudo k3s kubectl get pods -n desksync` (all `Running`).
-2. **Agent up on Mac?** `cd desktop-agent && cargo build -p desksync-agent --features native` then run with env vars (§3). Confirm `authenticated`.
-3. **macOS Screen Recording** enabled for the launching app.
+2. **Agent up on Mac?** `cd desktop-agent && cargo build -p desksync-agent --features native`, run it, then `desksync-agent status` — one command answers signed-in, device id, permissions, frames, and last error.
+3. **Anything missing?** `desksync-agent setup` fixes it in order and says what it could not.
 4. **Phone:** install latest APK (§4), log in, tap Connect.
 5. Watch agent `frame stream stats sent:… dropped:…` to confirm streaming.

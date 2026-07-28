@@ -19,6 +19,7 @@ desksync-media.workspace = true
 desksync-backend.workspace = true
 desksync-devtools.workspace = true
 desksync-ipc.workspace = true
+desksync-permissions.workspace = true
 tokio.workspace = true
 async-trait.workspace = true
 tracing.workspace = true
@@ -40,4 +41,5 @@ native = [
     "desksync-input/native",
     "desksync-media/rtc",
     "desksync-core/os-keychain",
+    "desksync-permissions/native",
 ]

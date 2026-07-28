@@ -1,0 +1,23 @@
+[package]
+name = "desksync-permissions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Detects and requests the OS permissions the DeskSync agent needs (screen capture, input injection, notifications)."
+
+[features]
+default = []
+# Query the real OS permission state. Off by default so headless CI needs no
+# platform frameworks; enabled by the agent's own `native` feature.
+native = ["dep:core-graphics", "dep:macos-accessibility-client"]
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+
+# macOS permission state. Both expose safe wrappers over the underlying C/ObjC
+# APIs, so this crate needs no `unsafe` of its own.
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = { version = "0.25", optional = true }
+macos-accessibility-client = { version = "0.0.1", optional = true }

@@ -28,7 +28,12 @@ pub async fn request(config_dir: &Path, request: Request) -> Result<Response> {
         Ok(s) => s,
         // A refused connection or missing socket both mean "no service", not a
         // failure the caller can act on differently.
-        Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused) => {
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+            ) =>
+        {
             return Err(IpcError::NotRunning)
         }
         Err(e) => return Err(IpcError::Io(e)),
@@ -44,7 +49,9 @@ pub async fn request(config_dir: &Path, request: Request) -> Result<Response> {
     let mut line = String::new();
     let mut reader = BufReader::new(read_half);
     if reader.read_line(&mut line).await? == 0 {
-        return Err(IpcError::Protocol("service closed the connection without replying".into()));
+        return Err(IpcError::Protocol(
+            "service closed the connection without replying".into(),
+        ));
     }
     serde_json::from_str(&line).map_err(|e| IpcError::Protocol(format!("decoding response: {e}")))
 }

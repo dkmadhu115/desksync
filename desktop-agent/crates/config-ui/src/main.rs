@@ -33,6 +33,7 @@ mod agent_auth;
 mod service_state;
 #[cfg(feature = "native")]
 mod session_runtime;
+mod setup;
 
 use service_state::ServiceState;
 
@@ -234,10 +235,7 @@ fn run_service(action: Option<&str>) -> anyhow::Result<()> {
         }
         Some("status") => {
             let status = manager.status();
-            println!(
-                "Installed: {}",
-                if status.installed { "yes" } else { "no" }
-            );
+            println!("Installed: {}", if status.installed { "yes" } else { "no" });
             match status.running {
                 Some(true) => println!("Running:   yes"),
                 Some(false) => println!("Running:   no"),
@@ -262,7 +260,12 @@ async fn run_status(store: &AgentStore) -> anyhow::Result<()> {
     match desksync_ipc::request(store.dir(), IpcRequest::GetStatus).await {
         Ok(IpcResponse::Status(status)) => {
             println!("DeskSync service v{}", status.version);
-            println!("  Signed in:       {}", if status.signed_in { "yes" } else { "no" });
+            let sign_in = match (status.signed_in, status.signing_in) {
+                (true, _) => "yes",
+                (false, true) => "signing in…",
+                (false, false) => "no",
+            };
+            println!("  Signed in:       {sign_in}");
             println!("  Device id:       {}", status.device_id);
             println!("  Backend:         {}", status.api_url);
             println!(
@@ -281,11 +284,26 @@ async fn run_status(store: &AgentStore) -> anyhow::Result<()> {
                 Some(e) => println!("  Last error:      {e}"),
                 None => println!("  Last error:      none"),
             }
+
+            if !status.permissions.is_empty() {
+                println!("  Permissions:");
+                for p in &status.permissions {
+                    let state = match p.granted {
+                        Some(true) => "granted",
+                        Some(false) => "NOT granted",
+                        None => "unknown",
+                    };
+                    println!("    {:<34} {state}", p.name);
+                    if p.granted == Some(false) {
+                        println!("    {:<34} without it, {}", "", p.consequence);
+                    }
+                }
+            }
+
+            // Frames stop at the capture backend, so a missing grant shows up here
+            // long before anything logs an error.
             if !status.capture.producing_frames {
-                println!(
-                    "\nNo frames captured yet. On macOS this usually means Screen Recording\n\
-                     permission is missing for the agent binary."
-                );
+                println!("\nNo frames captured. Run `desksync-agent permissions` to check access.");
             }
             Ok(())
         }
@@ -308,11 +326,13 @@ fn print_usage() {
         "DeskSync desktop agent\n\n\
          Usage:\n\
          \x20 desksync-agent                    run the agent in the foreground\n\
+         \x20 desksync-agent setup              guided first-run setup (start here)\n\
          \x20 desksync-agent login              sign in with Google via your browser\n\
          \x20 desksync-agent login --password   sign in with DESKSYNC_EMAIL/DESKSYNC_PASSWORD\n\
          \x20 desksync-agent logout             remove stored credentials\n\
          \x20 desksync-agent pair               show a pairing QR code for the mobile app\n\
          \x20 desksync-agent status             ask the running agent what it is doing\n\
+         \x20 desksync-agent permissions        show which OS permissions are granted\n\
          \x20 desksync-agent service install    run in the background, starting at login\n\
          \x20 desksync-agent service status     show whether the service is installed/running\n\
          \x20 desksync-agent service restart    restart the background service\n\
@@ -421,6 +441,8 @@ async fn main() -> anyhow::Result<()> {
             return run_login(&store, &config, &identity, mode).await;
         }
         Some("logout") => return run_logout(&store),
+        Some("setup") => return setup::run(&store, &config, &identity).await,
+        Some("permissions") => return setup::print_permissions(),
         Some("status") => return run_status(&store).await,
         Some("service") => return run_service(args.get(1).map(String::as_str)),
         Some("help" | "--help" | "-h") => {
@@ -513,6 +535,19 @@ async fn main() -> anyhow::Result<()> {
             .map(|p| p.display().to_string()),
     ));
 
+    // Serve status queries *before* signing in. Sign-in reads the OS keychain,
+    // which can block for a long time (macOS asks for access after any rebuild),
+    // and that is exactly when someone runs `status` to see what is happening.
+    // A failure here must not stop the agent: losing diagnostics is far less bad
+    // than not running at all.
+    let _ipc = match desksync_ipc::listen(store.dir(), Arc::clone(&state) as Arc<dyn StatusSource>).await {
+        Ok(server) => Some(server),
+        Err(e) => {
+            tracing::warn!(error = %e, "status ipc unavailable; `desksync-agent status` will not work");
+            None
+        }
+    };
+
     // Sign-in state: stored keychain credentials (from `desksync-agent login`),
     // or password credentials in the environment for CI. With neither, the agent
     // still runs locally — it just can't report presence or accept sessions,
@@ -525,23 +560,15 @@ async fn main() -> anyhow::Result<()> {
         Ok(None) => {
             let msg = "not signed in; run `desksync-agent login` to connect this desktop to your account";
             tracing::warn!("{msg}");
+            state.set_signed_out();
             state.record_error(msg);
             None
         }
         Err(e) => {
             let msg = format!("{e:#}");
             tracing::error!(error = %msg, "sign-in failed; continuing without backend connectivity");
+            state.set_signed_out();
             state.record_error(msg);
-            None
-        }
-    };
-
-    // Serve status queries. A failure here must not stop the agent: losing the
-    // diagnostics channel is far less bad than not running at all.
-    let _ipc = match desksync_ipc::listen(store.dir(), Arc::clone(&state) as Arc<dyn StatusSource>).await {
-        Ok(server) => Some(server),
-        Err(e) => {
-            tracing::warn!(error = %e, "status ipc unavailable; `desksync-agent status` will not work");
             None
         }
     };

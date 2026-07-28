@@ -56,7 +56,9 @@ pub async fn listen(config_dir: &Path, status: Arc<dyn StatusSource>) -> Result<
     // check is what stops a second service instance from stealing the channel.
     if socket.exists() {
         if tokio::net::UnixStream::connect(&socket).await.is_ok() {
-            return Err(IpcError::Protocol("another service instance is already listening".into()));
+            return Err(IpcError::Protocol(
+                "another service instance is already listening".into(),
+            ));
         }
         tokio::fs::remove_file(&socket).await?;
     }
@@ -97,11 +99,7 @@ pub async fn listen(_config_dir: &Path, _status: Arc<dyn StatusSource>) -> Resul
 
 /// Handle requests on one connection until the peer closes it.
 #[cfg(unix)]
-async fn serve_connection(
-    stream: tokio::net::UnixStream,
-    status: Arc<dyn StatusSource>,
-    token: String,
-) -> Result<()> {
+async fn serve_connection(stream: tokio::net::UnixStream, status: Arc<dyn StatusSource>, token: String) -> Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     let (read_half, mut write_half) = stream.into_split();
@@ -204,7 +202,9 @@ mod tests {
                     max_height: 720,
                     producing_frames: false,
                 },
+                signing_in: false,
                 active_sessions: 2,
+                permissions: Vec::new(),
                 last_error: Some("heartbeat failed".into()),
             }
         }
@@ -283,7 +283,11 @@ mod tests {
         assert_eq!(token_mode & 0o777, 0o600, "token must not be readable by other users");
 
         let socket_mode = std::fs::metadata(socket_path(dir.path())).unwrap().permissions().mode();
-        assert_eq!(socket_mode & 0o777, 0o600, "another local user must not be able to connect");
+        assert_eq!(
+            socket_mode & 0o777,
+            0o600,
+            "another local user must not be able to connect"
+        );
     }
 
     #[tokio::test]

@@ -57,6 +57,12 @@ pub struct ServiceStatus {
     pub uptime_secs: u64,
     /// Whether usable credentials were found at startup.
     pub signed_in: bool,
+    /// Sign-in is still in progress, so `signed_in: false` is not yet an answer.
+    /// Reading the OS credential store can take a while (macOS prompts for
+    /// keychain access after any rebuild), and reporting a bare "not signed in"
+    /// during that window sends people off fixing the wrong thing.
+    #[serde(default)]
+    pub signing_in: bool,
     /// Backend-assigned device id, or the `unregistered` placeholder.
     pub device_id: String,
     /// REST base URL the service is talking to, so a client can tell which
@@ -66,9 +72,30 @@ pub struct ServiceStatus {
     pub capture: CaptureStatus,
     /// Remote-control sessions currently being served.
     pub active_sessions: u32,
+    /// OS permission state, as seen by the **service** binary — which is the one
+    /// that matters, since macOS grants capture consent per executable.
+    #[serde(default)]
+    pub permissions: Vec<PermissionStatus>,
     /// The most recent error worth reporting, if any. This is the field that
     /// answers "it says offline, why?" without reading the log file.
     pub last_error: Option<String>,
+}
+
+/// One OS permission as reported by the service.
+///
+/// Deliberately plain strings and a tri-state bool: the wire format should not
+/// have to change when the set of permissions does, and clients only display it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PermissionStatus {
+    /// Name as the OS calls it, e.g. "Accessibility".
+    pub name: String,
+    /// `None` when the platform or build cannot determine the state. Clients must
+    /// render this as "unknown", never as denied.
+    pub granted: Option<bool>,
+    /// Whether the agent is unusable without it.
+    pub required: bool,
+    /// What the user loses without it, phrased as a consequence.
+    pub consequence: String,
 }
 
 /// Capture pipeline configuration and whether frames are actually being produced.
@@ -144,6 +171,7 @@ mod tests {
             version: "0.1.0".into(),
             uptime_secs: 42,
             signed_in: true,
+            signing_in: false,
             device_id: "device-1".into(),
             api_url: "http://localhost:8080".into(),
             capture: CaptureStatus {
@@ -152,7 +180,32 @@ mod tests {
                 producing_frames: true,
             },
             active_sessions: 1,
+            permissions: vec![PermissionStatus {
+                name: "Accessibility".into(),
+                granted: Some(false),
+                required: false,
+                consequence: "you can watch the screen but not control it".into(),
+            }],
             last_error: None,
+        }
+    }
+
+    #[test]
+    fn an_older_service_without_the_newer_fields_still_decodes() {
+        // `permissions` and `signing_in` were added after PROTOCOL_VERSION 1
+        // shipped, so a payload without them must not break a newer client.
+        let json = r#"{"response":"status","version":"0.1.0","uptime_secs":1,"signed_in":true,
+            "device_id":"d","api_url":"http://x","capture":{"target_fps":20,"max_height":720,
+            "producing_frames":true},"active_sessions":0,"last_error":null}"#;
+        let decoded: Response = serde_json::from_str(json).expect("must tolerate missing fields");
+        match decoded {
+            Response::Status(status) => {
+                assert!(status.permissions.is_empty());
+                // Absent means "not mid-sign-in", so an old service is never
+                // rendered as perpetually signing in.
+                assert!(!status.signing_in);
+            }
+            other => panic!("expected status, got {other:?}"),
         }
     }
 
@@ -174,9 +227,7 @@ mod tests {
             Response::LogPath {
                 path: Some("/tmp/agent.log".into()),
             },
-            Response::Error {
-                message: "nope".into(),
-            },
+            Response::Error { message: "nope".into() },
         ];
         for res in responses {
             let encoded = serde_json::to_string(&res).unwrap();

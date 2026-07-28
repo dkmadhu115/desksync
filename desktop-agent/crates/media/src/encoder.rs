@@ -69,12 +69,7 @@ impl JpegScreenEncoder {
         let mut buf = Vec::with_capacity(64 * 1024);
         let encoder = Encoder::new(&mut buf, self.quality);
         encoder
-            .encode(
-                &scaled.data,
-                scaled.width as u16,
-                scaled.height as u16,
-                ColorType::Bgra,
-            )
+            .encode(&scaled.data, scaled.width as u16, scaled.height as u16, ColorType::Bgra)
             .map_err(|e| EncodeError::Encode(e.to_string()))?;
         Ok(EncodedFrame {
             width: scaled.width,

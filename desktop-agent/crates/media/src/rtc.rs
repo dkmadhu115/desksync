@@ -117,8 +117,8 @@ impl AgentPeer {
             .map_err(|e| anyhow!("register codecs: {e}"))?;
 
         let mut registry = Registry::new();
-        registry = register_default_interceptors(registry, &mut media)
-            .map_err(|e| anyhow!("register interceptors: {e}"))?;
+        registry =
+            register_default_interceptors(registry, &mut media).map_err(|e| anyhow!("register interceptors: {e}"))?;
 
         let api = APIBuilder::new()
             .with_media_engine(media)
@@ -224,8 +224,7 @@ impl AgentPeer {
     /// Apply the controller's SDP offer and return the local SDP answer. ICE is
     /// trickled: local candidates arrive as [`PeerEvent::LocalIce`] afterwards.
     pub async fn accept_offer(&self, offer_sdp: &str) -> Result<String> {
-        let offer = RTCSessionDescription::offer(offer_sdp.to_string())
-            .map_err(|e| anyhow!("parse offer: {e}"))?;
+        let offer = RTCSessionDescription::offer(offer_sdp.to_string()).map_err(|e| anyhow!("parse offer: {e}"))?;
         self.pc
             .set_remote_description(offer)
             .await

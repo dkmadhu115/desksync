@@ -282,7 +282,9 @@ mod tests {
         let store = FileSecretStore::new(dir.path());
         store.set("k", "v").unwrap();
 
-        let perms = std::fs::metadata(dir.path().join("secrets.json")).unwrap().permissions();
+        let perms = std::fs::metadata(dir.path().join("secrets.json"))
+            .unwrap()
+            .permissions();
         assert_eq!(perms.mode() & 0o777, 0o600);
     }
 }

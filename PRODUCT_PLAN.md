@@ -141,12 +141,39 @@ device registration. macOS first (our live test box), then Windows, then Linux.
   additive client rather than a refactor. The current product direction is
   CLI-on-desktop + app-on-phone, so the window itself is not on the critical path.
 
-### Epic 1.5 — First-run wizard + permissions (macOS first)
-- Tauri wizard: Welcome → Continue with Google → grant Screen Recording →
-  grant Accessibility → grant Notifications → “Device registered” → Finish.
-- Detect permission state and deep-link to the correct System Settings pane;
-  re-check on focus.
-- **Acceptance:** a new user reaches “online + ready” purely through the wizard.
+### Epic 1.5 — First-run wizard + permissions ✅ (CLI wizard; Tauri window deferred)
+- New `desksync-permissions` crate detects real OS state instead of guessing:
+  Screen Recording via `CGPreflightScreenCaptureAccess`, Accessibility via
+  `AXIsProcessTrusted`, both behind the `native` feature. Every permission carries
+  its user-facing label, whether it is *required*, the consequence of missing it,
+  and the System Settings deep link. Non-macOS and non-native builds report
+  `Unknown` — never a denial they cannot prove.
+- `desksync-agent setup` walks sign-in → permissions → registration → background
+  service in dependency order, re-checking after each grant, and ends with what is
+  still missing rather than a generic "done". Screen Recording additionally tells
+  the user to restart the agent, because macOS applies capture consent only at
+  process start.
+- `desksync-agent permissions` prints the same verdict without prompting, and
+  `status` now reports permissions over IPC — the state that matters is the
+  *service* binary's, since macOS grants consent per executable.
+- Unattended (`setup` with no TTY) degrades to a read-only report: it will not
+  install a launchd job, open System Settings, or launch a browser without a
+  person agreeing. The readiness decision is a pure, unit-tested function, so
+  "optional permission denied" stays ready and `Unknown` never blocks.
+- **Startup no longer blocks on the keychain.** The credential read is a blocking
+  OS call that took **54 s** on a rebuilt dev binary (macOS asks for keychain
+  access whenever the signature changes). It now runs on a blocking thread, warns
+  when it is slow, and — critically — IPC starts *before* sign-in, so `status`
+  answers in ~0.1 s instead of being dead for the entire window when you most need
+  it. `status` distinguishes `signing in…` from a settled `no`.
+- `BackendClient` had **no HTTP timeout**: a black-holed backend hung a heartbeat
+  or poll forever, silently leaving the device offline with no retry. Now 20 s per
+  request, 8 s to connect.
+- **Acceptance:** on a clean Mac, `setup` takes a new user to "online + ready",
+  and when it cannot, it names the missing piece. Verified end-to-end against the
+  Azure backend.
+- **Deferred:** the Tauri window. It is an additive IPC client over the contract
+  from 1.4 plus this permission report, not a rewrite.
 
 ### Epic 1.6 — macOS installer (.pkg) + signing/notarization scaffold
 - Tauri bundler / `pkgbuild` to produce `DeskSync.pkg` that installs the app +

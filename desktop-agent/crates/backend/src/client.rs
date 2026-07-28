@@ -39,12 +39,27 @@ pub struct BackendClient {
     base_url: String,
 }
 
+/// Ceiling on a single backend request.
+///
+/// Without a timeout, a black-holed connection (asleep VPN, dropped route, a
+/// backend accepting but never answering) hangs the caller forever. In a
+/// long-lived daemon that means a heartbeat or poll that never returns and never
+/// retries, so the device silently stays offline. Every call here is idempotent or
+/// safely retried, so failing fast is strictly better.
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Ceiling on establishing the TCP/TLS connection, kept shorter than the overall
+/// timeout so an unreachable host is reported quickly.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+
 impl BackendClient {
     /// Build a client for the given gateway base URL (e.g.
     /// `https://api.desksync.example`). A trailing slash is trimmed.
     pub fn new(base_url: impl Into<String>) -> Result<Self> {
         let http = reqwest::Client::builder()
             .use_rustls_tls()
+            .timeout(REQUEST_TIMEOUT)
+            .connect_timeout(CONNECT_TIMEOUT)
             .build()
             .map_err(|e| BackendError::Http(e.to_string()))?;
         Ok(Self {
@@ -175,8 +190,7 @@ impl BackendApi for BackendClient {
 
     async fn pending_sessions(&self, access_token: &str, device_id: &str) -> Result<Vec<PendingSession>> {
         let path = format!("/api/v1/sessions/pending?device_id={device_id}");
-        let resp: PendingSessions =
-            decode_json(self.http.get(self.url(&path)).bearer_auth(access_token)).await?;
+        let resp: PendingSessions = decode_json(self.http.get(self.url(&path)).bearer_auth(access_token)).await?;
         Ok(resp.sessions)
     }
 }

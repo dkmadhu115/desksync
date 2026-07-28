@@ -16,6 +16,7 @@
 //! key), so it is safe to call whenever the local device id is missing.
 
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use desksync_backend::{
@@ -23,7 +24,9 @@ use desksync_backend::{
     DeviceRegistration, TokenPair, TokenSink,
 };
 use desksync_core::identity::DeviceIdentity;
-use desksync_core::{default_secret_store, load_tokens, save_tokens, AgentConfig, AgentStore, SecretStore, TokenBundle};
+use desksync_core::{
+    default_secret_store, load_tokens, save_tokens, AgentConfig, AgentStore, SecretStore, TokenBundle,
+};
 
 /// Placeholder written into a fresh config before the backend assigns an id.
 const UNREGISTERED: &str = "unregistered";
@@ -94,12 +97,7 @@ pub async fn bootstrap(
     identity: &DeviceIdentity,
 ) -> anyhow::Result<Option<AgentSession>> {
     let secrets: Arc<dyn SecretStore> = Arc::from(default_secret_store(store.dir()));
-    // A malformed/unreadable secret store must not stop the agent: treat it as
-    // "not signed in" and let the user re-run `login`.
-    let stored = load_tokens(secrets.as_ref()).unwrap_or_else(|e| {
-        tracing::warn!(error = %e, "could not read stored credentials; treating as signed out");
-        None
-    });
+    let stored = read_stored_tokens(Arc::clone(&secrets)).await;
     let env_creds = Credentials::from_env().ok();
 
     // `config.json` is the single source of truth for device identity. The copy in
@@ -110,8 +108,7 @@ pub async fn bootstrap(
     // key), so redoing it costs nothing and returns the same id.
     let device_id = config.device_id.clone();
 
-    let api: Arc<dyn BackendApi> =
-        Arc::new(BackendClient::new(&config.api_url).context("building backend client")?);
+    let api: Arc<dyn BackendApi> = Arc::new(BackendClient::new(&config.api_url).context("building backend client")?);
     let sink = Arc::new(KeychainTokenSink::new(Arc::clone(&secrets), device_id.clone()));
 
     let session = match stored {
@@ -144,6 +141,46 @@ pub async fn bootstrap(
 
     let device_id = ensure_registered(&session, &sink, store, config, identity, device_id).await?;
     Ok(Some(AgentSession { session, device_id }))
+}
+
+/// How long a keychain read may take before we explain the delay.
+const SLOW_KEYCHAIN_READ: Duration = Duration::from_secs(2);
+
+/// Read stored credentials without blocking the async runtime.
+///
+/// The OS credential store is a synchronous C API, and on macOS it can block for
+/// a long time: a binary whose signature changed (any rebuild of a dev build)
+/// triggers a keychain access dialog, and the read does not return until the user
+/// answers. Observed at 54 seconds on a dev build. Keeping it on a blocking thread
+/// stops it from stalling everything else, and a warning explains the pause
+/// instead of leaving the agent looking hung.
+///
+/// A malformed or unreadable store is treated as "not signed in" rather than an
+/// error: the user can recover with `login`.
+async fn read_stored_tokens(secrets: Arc<dyn SecretStore>) -> Option<TokenBundle> {
+    let started = Instant::now();
+    let result = tokio::task::spawn_blocking(move || load_tokens(secrets.as_ref())).await;
+    let elapsed = started.elapsed();
+
+    if elapsed > SLOW_KEYCHAIN_READ {
+        tracing::warn!(
+            seconds = elapsed.as_secs(),
+            "reading stored credentials was slow — macOS may have asked for keychain access; \
+             choose \"Always Allow\" to avoid the pause on future starts"
+        );
+    }
+
+    match result {
+        Ok(Ok(tokens)) => tokens,
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "could not read stored credentials; treating as signed out");
+            None
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "credential read task failed; treating as signed out");
+            None
+        }
+    }
 }
 
 /// Register this desktop if it has no device id yet, persisting the assigned id

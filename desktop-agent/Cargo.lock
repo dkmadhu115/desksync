@@ -90,7 +90,7 @@ dependencies = [
  "objc2-foundation",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
  "x11rb",
 ]
 
@@ -823,6 +823,7 @@ dependencies = [
  "desksync-input",
  "desksync-ipc",
  "desksync-media",
+ "desksync-permissions",
  "desksync-transport",
  "serde_json",
  "tempfile",
@@ -951,6 +952,16 @@ dependencies = [
  "tokio",
  "tracing",
  "webrtc",
+]
+
+[[package]]
+name = "desksync-permissions"
+version = "0.1.0"
+dependencies = [
+ "core-graphics",
+ "macos-accessibility-client",
+ "thiserror 2.0.19",
+ "tracing",
 ]
 
 [[package]]
@@ -2102,6 +2113,16 @@ name = "lru-slab"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
+
+[[package]]
+name = "macos-accessibility-client"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edf7710fbff50c24124331760978fb9086d6de6288dcdb38b25a97f8b1bdebbb"
+dependencies = [
+ "core-foundation 0.9.4",
+ "core-foundation-sys",
+]
 
 [[package]]
 name = "matchers"

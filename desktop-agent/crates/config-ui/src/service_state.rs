@@ -15,12 +15,14 @@ use std::time::Instant;
 use async_trait::async_trait;
 use desksync_capture::CaptureLoop;
 use desksync_core::AgentConfig;
-use desksync_ipc::{CaptureStatus, ServiceStatus, StatusSource};
+use desksync_ipc::{CaptureStatus, PermissionStatus, ServiceStatus, StatusSource};
+use desksync_permissions::PermissionState;
 
 /// Shared state describing what the service is currently doing.
 pub struct ServiceState {
     started: Instant,
     signed_in: AtomicBool,
+    signing_in: AtomicBool,
     device_id: RwLock<String>,
     api_url: String,
     target_fps: u32,
@@ -37,6 +39,9 @@ impl ServiceState {
         Self {
             started: Instant::now(),
             signed_in: AtomicBool::new(false),
+            // The service is created just before sign-in is attempted, so this
+            // starts true and is cleared once the attempt resolves either way.
+            signing_in: AtomicBool::new(true),
             device_id: RwLock::new(config.device_id.clone()),
             api_url: config.api_url.clone(),
             target_fps: config.target_fps,
@@ -52,7 +57,14 @@ impl ServiceState {
     /// service is acting as.
     pub fn set_signed_in(&self, device_id: &str) {
         self.signed_in.store(true, Ordering::Relaxed);
+        self.signing_in.store(false, Ordering::Relaxed);
         *self.device_id.write().expect("device id lock poisoned") = device_id.to_string();
+    }
+
+    /// Record that the sign-in attempt finished without credentials, turning a
+    /// "still trying" report into a definite "signed out".
+    pub fn set_signed_out(&self) {
+        self.signing_in.store(false, Ordering::Relaxed);
     }
 
     /// Record the most recent problem worth surfacing to the user.
@@ -84,6 +96,25 @@ impl ServiceState {
     }
 }
 
+/// Snapshot OS permission state in the IPC wire form.
+fn permission_report() -> Vec<PermissionStatus> {
+    desksync_permissions::check_all()
+        .into_iter()
+        .map(|check| PermissionStatus {
+            name: check.permission.label().to_string(),
+            granted: match check.state {
+                PermissionState::Granted => Some(true),
+                PermissionState::Denied => Some(false),
+                // Reported as unknown rather than false, so clients don't tell
+                // users to fix something that may already be fine.
+                PermissionState::Unknown => None,
+            },
+            required: check.permission.is_required(),
+            consequence: check.permission.consequence().to_string(),
+        })
+        .collect()
+}
+
 /// Decrements the active-session count when dropped.
 ///
 /// A guard rather than explicit decrements: a session task can end by error,
@@ -106,6 +137,7 @@ impl StatusSource for ServiceState {
             version: env!("CARGO_PKG_VERSION").to_string(),
             uptime_secs: self.started.elapsed().as_secs(),
             signed_in: self.signed_in.load(Ordering::Relaxed),
+            signing_in: self.signing_in.load(Ordering::Relaxed),
             device_id: self.device_id.read().expect("device id lock poisoned").clone(),
             api_url: self.api_url.clone(),
             capture: CaptureStatus {
@@ -117,6 +149,9 @@ impl StatusSource for ServiceState {
                 producing_frames: self.capture.subscribe().borrow().is_some(),
             },
             active_sessions: self.active_sessions(),
+            // Checked live, not at startup: the user may grant a permission while
+            // the service runs, and `status` should reflect that.
+            permissions: permission_report(),
             last_error: self.last_error.read().expect("last error lock poisoned").clone(),
         }
     }
@@ -149,22 +184,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_fresh_service_reports_signed_out_with_no_sessions() {
+    async fn a_fresh_service_reports_sign_in_in_progress_with_no_sessions() {
         let status = state().status().await;
         assert!(!status.signed_in);
+        assert!(
+            status.signing_in,
+            "before the attempt resolves, `no` would be a wrong answer"
+        );
         assert_eq!(status.active_sessions, 0);
         assert!(status.last_error.is_none());
         assert!(!status.capture.producing_frames, "no frames captured yet");
     }
 
     #[tokio::test]
-    async fn signing_in_publishes_the_device_id() {
+    async fn signing_in_publishes_the_device_id_and_ends_the_pending_state() {
         let state = state();
         state.set_signed_in("device-7");
 
         let status = state.status().await;
         assert!(status.signed_in);
+        assert!(!status.signing_in);
         assert_eq!(status.device_id, "device-7");
+    }
+
+    #[tokio::test]
+    async fn a_failed_sign_in_reports_a_definite_signed_out() {
+        let state = state();
+        state.set_signed_out();
+
+        let status = state.status().await;
+        assert!(!status.signed_in);
+        assert!(!status.signing_in, "the attempt finished, so this is now an answer");
     }
 
     #[tokio::test]

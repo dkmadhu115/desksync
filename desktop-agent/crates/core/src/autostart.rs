@@ -154,7 +154,11 @@ fn render_entry(exec: &Path, log: Option<&Path>) -> String {
     // XDG autostart has no log redirection, so wrap the command in a shell when
     // a log path is configured.
     let command = match log {
-        Some(path) => format!("sh -c '\"{exec}\" >> \"{log}\" 2>&1'", exec = exec.display(), log = path.display()),
+        Some(path) => format!(
+            "sh -c '\"{exec}\" >> \"{log}\" 2>&1'",
+            exec = exec.display(),
+            log = path.display()
+        ),
         None => exec.display().to_string(),
     };
     format!(

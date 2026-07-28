@@ -133,7 +133,10 @@ impl SessionManager {
             &ps.signaling_ticket,
             "agent",
         ));
-        signaling.connect().await.map_err(|e| anyhow::anyhow!("signaling connect: {e}"))?;
+        signaling
+            .connect()
+            .await
+            .map_err(|e| anyhow::anyhow!("signaling connect: {e}"))?;
 
         let ice_servers = ps
             .ice_servers
@@ -245,7 +248,9 @@ impl SessionManager {
 
         // Drive the negotiation from inbound signaling until the session closes.
         let mut negotiation = NegotiationState::new(NegotiationRole::Agent);
-        let result = self.signaling_loop(&signaling, &peer, &mut negotiation, &session_id).await;
+        let result = self
+            .signaling_loop(&signaling, &peer, &mut negotiation, &session_id)
+            .await;
 
         // Teardown.
         frame_task.abort();
