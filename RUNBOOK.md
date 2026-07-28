@@ -157,13 +157,18 @@ token). Read it as follows:
 Reports what the OS actually grants this binary, what breaks without each one, and
 nothing it cannot verify (non-macOS builds say `unknown` rather than guessing).
 
-Two macOS behaviours cause most confusion:
+Three macOS behaviours cause most confusion:
 
 - **Consent is per executable.** Rebuilding the agent, or moving it, can require a
   fresh grant — and after `service install`, the grant that matters is the one for
   the installed path.
 - **Capture consent is read at process start.** Granting Screen Recording while the
   agent is running does nothing until you restart it.
+- **A binary launched from Terminal inherits Terminal's grant.** macOS attributes
+  screen access to the *responsible* process, so `desksync-agent permissions` run
+  in a terminal can report `granted` on the strength of Terminal's own permission,
+  while the same binary started by launchd has none. That is why `status` reports
+  the permissions the **service** process sees — trust that one.
 
 A rebuilt binary also changes its signature, so macOS re-asks for **keychain**
 access on the next start. That read blocks until you answer (54 s was observed
@@ -262,6 +267,64 @@ To re-point at a different backend, edit `backend_url` + `api_url`, set
 `device_id` to `unregistered`, and restart — the agent re-registers automatically
 on the next authenticated start, no `pair` needed. `autostart: true` keeps the
 service entry installed; the running daemon never starts/stops itself.
+
+### Build the installer (`.pkg`)
+
+```bash
+cd desktop-agent/packaging/macos
+./build-pkg.sh                 # universal (arm64 + x86_64) — ~3 min
+./build-pkg.sh --host-only     # current arch only, for a quick dev build
+```
+
+Output is `desktop-agent/dist/DeskSync-<version>.pkg` (~9 MB). It installs
+`/Applications/DeskSync.app` and links `desksync` into `/usr/local/bin`, then its
+last pane tells the user to run `desksync setup`.
+
+Install it locally:
+
+```bash
+sudo installer -pkg ../../dist/DeskSync-0.1.0.pkg -target /
+desksync setup
+```
+
+Remove it again:
+
+```bash
+./uninstall.sh            # keeps your sign-in and device identity
+./uninstall.sh --purge    # also clears state, logs, and the keychain entry
+```
+
+The app is a **bundle**, not a bare binary, on purpose: macOS shows the user the
+identity it is granting screen access to, and a bundle with a stable id shows up as
+"DeskSync" and keeps its grants across upgrades. Upgrades are handled in
+`postinstall` — replacing the binary under a running launchd job would otherwise
+leave the old process serving with nothing to indicate it.
+
+### Signing and notarization
+
+Builds from this repo are **ad-hoc signed only** — there is no Apple Developer
+identity on this machine (`security find-identity -v -p codesigning` → 0 found).
+Consequences worth knowing before sharing a build:
+
+- Gatekeeper blocks it on any other Mac (locally: right-click → Open, or use
+  `sudo installer`).
+- macOS re-asks for screen recording and keychain access after every rebuild,
+  because an unsigned binary's identity changes each time.
+
+With a Developer ID, one command produces a distributable installer:
+
+```bash
+export DESKSYNC_SIGN_IDENTITY="Developer ID Application: You (TEAMID)"
+export DESKSYNC_INSTALLER_IDENTITY="Developer ID Installer: You (TEAMID)"
+export DESKSYNC_NOTARY_PROFILE="desksync-notary"   # notarytool store-credentials
+./sign-and-notarize.sh
+```
+
+It signs with the hardened runtime and a secure timestamp, signs the installer,
+submits to Apple, waits, and staples the ticket so it validates offline. Missing
+credentials stop it with a specific error instead of emitting something that only
+looks signed. `DESKSYNC_SKIP_NOTARIZE=1` signs without notarizing for internal
+test builds.
 
 ---
 

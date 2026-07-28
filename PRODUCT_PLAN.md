@@ -175,12 +175,48 @@ device registration. macOS first (our live test box), then Windows, then Linux.
 - **Deferred:** the Tauri window. It is an additive IPC client over the contract
   from 1.4 plus this permission report, not a rewrite.
 
-### Epic 1.6 — macOS installer (.pkg) + signing/notarization scaffold
-- Tauri bundler / `pkgbuild` to produce `DeskSync.pkg` that installs the app +
-  the launchd service and launches the wizard.
-- Wire signing + notarization in CI (Epic 4.1) — secrets via GitHub Actions.
-- **Acceptance:** double-click `.pkg` on a clean Mac → installed, service running,
-  wizard opens.
+### Epic 1.6 — macOS installer (.pkg) + signing/notarization scaffold ✅
+Everything lives in `desktop-agent/packaging/macos/`.
+
+- `build-app.sh` produces **DeskSync.app** — a real bundle, not a loose binary,
+  because macOS ties screen-recording and accessibility consent to an executable's
+  identity and *shows that identity to the user*. A bare binary appears in System
+  Settings as `desksync-agent` with a generic icon and gets a fresh identity every
+  time it is replaced; a bundle with a stable id keeps its grants across upgrades.
+  `LSUIElement` keeps it out of the Dock, since the agent has no window.
+- Universal by default (arm64 + x86_64 via `lipo`), because the alternative is two
+  downloads or Rosetta — and Rosetta on a capture/encode hot path costs frames.
+  `--host-only` gives a fast dev build.
+- `build-pkg.sh` wraps it in a distribution package with a welcome pane and, more
+  usefully, a **conclusion pane** naming the one remaining step (`desksync setup`).
+  Output: `dist/DeskSync-<version>.pkg`, ~9 MB.
+- `postinstall` does exactly two things: links `desksync` onto `PATH`, and on an
+  *upgrade* restarts the service — replacing a binary under a running launchd job
+  leaves the old process serving, with nothing saying so. It deliberately does not
+  start the service on a fresh install: the agent can do nothing before a browser
+  sign-in, so that would only produce a service logging "not signed in" and a first
+  run needing a restart. `setup` starts it at the right moment.
+- `setup` now distinguishes "was already signed in" from "just signed in" and
+  restarts an installed service only when this run actually invalidated its
+  credentials — a restart drops live sessions, so it is not done gratuitously.
+- `sign-and-notarize.sh` is the release path: hardened runtime + timestamp,
+  `--entitlements` (network client/server, audio input, Apple events — each one
+  justified, none speculative), `productsign`, `notarytool submit --wait`, and
+  `stapler staple` so the ticket validates offline. Absent credentials produce a
+  precise error listing available identities rather than a fake-signed artifact.
+- `uninstall.sh` removes the app, the launchd job (booted out before the entry is
+  deleted, or it orphans a live process), the symlink, and the package receipt;
+  `--purge` also clears state, logs, and the keychain entry.
+- **Acceptance:** `.pkg` builds, installs `/Applications/DeskSync.app` +
+  `/usr/local/bin/desksync`, and the conclusion pane points at `desksync setup`,
+  which reaches "online + ready". Payload, receipts, bundle, and universal slices
+  verified; the install itself needs an admin password, so it is the one step left
+  to run by hand.
+- **Not signed:** there is no Apple Developer account on this machine
+  (`security find-identity` → 0 valid identities), so the artifact is ad-hoc signed
+  and Gatekeeper will block it elsewhere. This also means macOS re-asks for
+  screen-recording and keychain consent on each rebuild. The scaffold is ready for
+  a real Developer ID; CI wiring is Epic 4.1.
 
 **Phase 1 exit criteria:** on macOS, download `.pkg` → install → Google sign-in →
 grant permissions via wizard → device auto-registers → connect from phone. All

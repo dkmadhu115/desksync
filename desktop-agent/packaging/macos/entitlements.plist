@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Hardened runtime is mandatory for notarization, and it denies things by
+         default. Each exception below is one the agent genuinely needs; nothing is
+         listed "just in case", because every entitlement widens what a compromised
+         agent could do on the user's machine. -->
+
+    <!-- Peer-to-peer WebRTC to the phone, and REST/WebSocket to the backend. -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <!-- Local ICE candidates and the loopback listener that receives the OAuth
+         redirect during browser sign-in. -->
+    <key>com.apple.security.network.server</key>
+    <true/>
+
+    <!-- Screen capture reaches the window server through CoreGraphics, and
+         synthetic input through the accessibility APIs; both are additionally
+         gated by the user's TCC consent, which no entitlement can bypass. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+
+    <!-- Opens System Settings panes during setup. -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+</dict>
+</plist>

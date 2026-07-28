@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>DeskSync @VERSION@</title>
+    <organization>com.desksync</organization>
+
+    <!-- Per-user state (credentials, device identity) lives in the user's home, so
+         a system-wide install of the app plus a per-user service is the honest
+         model. Requiring admin once is worth not having to ask again. -->
+    <options customize="never" require-scripts="true" hostArchitectures="arm64,x86_64"/>
+
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+
+    <!-- macOS 11 is the floor: earlier versions lack the screen-capture consent
+         API the agent relies on to tell the user what is missing. -->
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min="11.0"/>
+        </allowed-os-versions>
+    </volume-check>
+
+    <pkg-ref id="@BUNDLE_ID@"/>
+    <choices-outline>
+        <line choice="default">
+            <line choice="@BUNDLE_ID@"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="@BUNDLE_ID@" visible="false">
+        <pkg-ref id="@BUNDLE_ID@"/>
+    </choice>
+    <pkg-ref id="@BUNDLE_ID@" version="@VERSION@" onConclusion="none">@COMPONENT_PKG@</pkg-ref>
+</installer-gui-script>

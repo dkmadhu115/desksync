@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>@BUNDLE_ID@</string>
+    <key>CFBundleName</key>
+    <string>DeskSync</string>
+    <key>CFBundleDisplayName</key>
+    <string>DeskSync</string>
+    <key>CFBundleExecutable</key>
+    <string>@EXECUTABLE@</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@VERSION@</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+
+    <!-- A background agent: it streams the screen and answers the phone, and has
+         no window of its own. Without this it would claim a Dock icon and appear
+         in the app switcher for a UI that does not exist. -->
+    <key>LSUIElement</key>
+    <true/>
+
+    <!-- macOS shows these strings in the consent dialogs it raises on our behalf,
+         so they have to explain the request in the user's terms, not ours. -->
+    <key>NSCameraUsageDescription</key>
+    <string>DeskSync does not use the camera.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>DeskSync can forward this Mac's audio to your phone during a session.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>DeskSync opens System Settings so you can grant screen recording and accessibility access.</string>
+
+    <key>NSHumanReadableCopyright</key>
+    <string>@COPYRIGHT@</string>
+</dict>
+</plist>

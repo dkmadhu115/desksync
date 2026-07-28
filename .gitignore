@@ -29,6 +29,10 @@ desktop-agent/target/
 **/*.rs.bk
 Cargo.lock.orig
 
+# Packaged installers: build output, and too large to version
+desktop-agent/dist/
+*.pkg
+
 # ---- Flutter / Dart ----
 mobile/.dart_tool/
 mobile/.flutter-plugins

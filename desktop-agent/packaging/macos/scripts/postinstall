@@ -1,0 +1,61 @@
+#!/bin/bash
+#
+# Runs as root after the payload is written to /Applications.
+#
+# Two jobs, and deliberately nothing more:
+#
+#   1. Put `desksync` on PATH, so the guided setup is one word to type.
+#   2. On an *upgrade*, restart the background service. Replacing a binary under a
+#      running launchd job does not touch the running process — without this the
+#      user keeps using the old version and nothing says so.
+#
+# It does not install or start the service on a fresh install. The agent cannot do
+# anything before someone signs in through a browser, so starting it here would
+# only produce a service that logs "not signed in" and a first run that needs a
+# restart to pick up credentials. `desksync setup` installs it at the right moment.
+
+APP="/Applications/DeskSync.app"
+BINARY="$APP/Contents/MacOS/desksync-agent"
+LINK="/usr/local/bin/desksync"
+LABEL="com.desksync.agent"
+
+log() { echo "desksync-postinstall: $*"; }
+
+if [ ! -x "$BINARY" ]; then
+    log "error: $BINARY missing or not executable"
+    exit 1
+fi
+
+mkdir -p /usr/local/bin
+if ln -sfn "$BINARY" "$LINK"; then
+    log "linked $LINK"
+else
+    log "warning: could not create $LINK; run the binary at $BINARY instead"
+fi
+
+# The installer runs as root, but the service is a per-user LaunchAgent belonging
+# to whoever is actually logged in at the console.
+console_user="$(stat -f%Su /dev/console 2>/dev/null)"
+if [ -z "$console_user" ] || [ "$console_user" = "root" ]; then
+    log "no console user; skipping service restart"
+    exit 0
+fi
+console_uid="$(id -u "$console_user" 2>/dev/null)"
+plist="/Users/$console_user/Library/LaunchAgents/$LABEL.plist"
+
+if [ ! -f "$plist" ]; then
+    log "service not installed for $console_user; \`desksync setup\` will install it"
+    exit 0
+fi
+
+log "restarting the background service for $console_user (upgrade)"
+# `service restart` rewrites the entry to point at this binary and reloads the job.
+# asuser puts it in the user's GUI session, which is where a LaunchAgent lives and
+# the only context where launchctl can load it.
+if launchctl asuser "$console_uid" sudo -u "$console_user" "$BINARY" service restart; then
+    log "service restarted on the new version"
+else
+    log "warning: could not restart the service; run \`desksync service restart\`"
+fi
+
+exit 0

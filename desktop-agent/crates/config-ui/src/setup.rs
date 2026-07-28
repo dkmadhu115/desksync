@@ -18,7 +18,7 @@ use std::io::{IsTerminal, Write};
 
 use anyhow::Context;
 use desksync_core::identity::DeviceIdentity;
-use desksync_core::{load_tokens, AgentConfig, AgentStore};
+use desksync_core::{load_tokens, AgentConfig, AgentStore, ServiceManager};
 use desksync_permissions::{Permission, PermissionState};
 
 use crate::agent_auth;
@@ -31,13 +31,13 @@ pub async fn run(store: &AgentStore, config: &AgentConfig, identity: &DeviceIden
     println!("DeskSync setup\n");
 
     step(1, "Sign in");
-    let signed_in = ensure_signed_in(store, config, identity).await?;
+    let sign_in = ensure_signed_in(store, config, identity).await?;
 
     step(2, "Screen & input permissions");
     let permissions = ensure_permissions();
 
     step(3, "Register this computer");
-    let device_id = match signed_in {
+    let device_id = match sign_in.is_signed_in() {
         true => register(store, config, identity).await,
         false => {
             println!("  Skipped — sign in first, then re-run `desksync-agent setup`.");
@@ -46,9 +46,14 @@ pub async fn run(store: &AgentStore, config: &AgentConfig, identity: &DeviceIden
     };
 
     step(4, "Run in the background");
-    offer_service();
+    // A background service reads credentials once, at startup. If this run just
+    // produced new ones — which is exactly what happens when the installer starts
+    // the service before anyone has signed in — the running copy is stale and must
+    // be restarted or it will sit there reporting "not signed in" forever.
+    let newly_registered = config.device_id.is_empty() && device_id.is_some();
+    offer_service(sign_in == SignIn::JustSignedIn || newly_registered);
 
-    summary(signed_in, device_id.as_deref(), &permissions);
+    summary(sign_in.is_signed_in(), device_id.as_deref(), &permissions);
     Ok(())
 }
 
@@ -58,27 +63,51 @@ fn step(n: usize, title: &str) {
     println!("{}", "-".repeat(40));
 }
 
+/// Outcome of the sign-in step.
+///
+/// "Signed in" alone is not enough to decide what to do next: a service that is
+/// already running only needs a restart if this run *changed* the credentials.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SignIn {
+    /// Credentials were already stored before this run.
+    Already,
+    /// This run signed in, so anything holding older credentials is now stale.
+    JustSignedIn,
+    /// Still signed out.
+    No,
+}
+
+impl SignIn {
+    fn is_signed_in(self) -> bool {
+        !matches!(self, SignIn::No)
+    }
+}
+
 /// Make sure credentials are stored, offering a browser sign-in if not.
-async fn ensure_signed_in(store: &AgentStore, config: &AgentConfig, identity: &DeviceIdentity) -> anyhow::Result<bool> {
+async fn ensure_signed_in(
+    store: &AgentStore,
+    config: &AgentConfig,
+    identity: &DeviceIdentity,
+) -> anyhow::Result<SignIn> {
     let secrets = desksync_core::default_secret_store(store.dir());
     if load_tokens(secrets.as_ref()).ok().flatten().is_some() {
         println!("  Already signed in. (Run `desksync-agent logout` to switch accounts.)");
-        return Ok(true);
+        return Ok(SignIn::Already);
     }
 
     if !consent("  Sign in with Google in your browser now?", true) {
         println!("  Not signed in. Run `desksync-agent login` when you're ready.");
-        return Ok(false);
+        return Ok(SignIn::No);
     }
 
     // Reuse the same path as the standalone command so there is one sign-in
     // implementation to keep correct.
     match crate::run_login(store, config, identity, crate::LoginMode::Browser).await {
-        Ok(()) => Ok(true),
+        Ok(()) => Ok(SignIn::JustSignedIn),
         Err(e) => {
             println!("  Sign-in failed: {e:#}");
             println!("  You can retry with `desksync-agent login`.");
-            Ok(false)
+            Ok(SignIn::No)
         }
     }
 }
@@ -174,15 +203,43 @@ async fn register(store: &AgentStore, config: &AgentConfig, identity: &DeviceIde
     }
 }
 
-/// Offer to install the background service.
-fn offer_service() {
-    if !consent("  Start DeskSync automatically in the background?", true) {
-        println!("  Not installed. Run `desksync-agent` in a terminal, or");
-        println!("  `desksync-agent service install` to have it always running.");
+/// Install the background service, or restart an installed one whose credentials
+/// this run has just invalidated.
+///
+/// `credentials_changed` decides between the two, because a restart drops any
+/// live session: it is the right thing to do when the service is running stale
+/// credentials, and rude when nothing has changed.
+fn offer_service(credentials_changed: bool) {
+    let installed = ServiceManager::for_current_exe()
+        .map(|m| m.status().installed)
+        .unwrap_or(false);
+
+    if !installed {
+        if !consent("  Start DeskSync automatically in the background?", true) {
+            println!("  Not installed. Run `desksync-agent` in a terminal, or");
+            println!("  `desksync-agent service install` to have it always running.");
+            return;
+        }
+        if let Err(e) = crate::run_service(Some("install")) {
+            println!("  Could not install the service: {e:#}");
+        }
         return;
     }
-    if let Err(e) = crate::run_service(Some("install")) {
-        println!("  Could not install the service: {e:#}");
+
+    if !credentials_changed {
+        println!("  Already installed and starting at login.");
+        println!("  Check on it with `desksync-agent status`.");
+        return;
+    }
+
+    println!("  The background service is running with older credentials.");
+    if !consent("  Restart it now? (this ends any active connection)", true) {
+        println!("  Not restarted — it will keep reporting \"not signed in\" until you run");
+        println!("  `desksync-agent service restart`.");
+        return;
+    }
+    if let Err(e) = crate::run_service(Some("restart")) {
+        println!("  Could not restart the service: {e:#}");
     }
 }
 
