@@ -18,6 +18,7 @@ pub mod autostart;
 pub mod config;
 pub mod error;
 pub mod identity;
+pub mod secret;
 pub mod single_instance;
 pub mod store;
 pub mod subsystem;
@@ -26,6 +27,10 @@ pub use autostart::Autostart;
 pub use config::AgentConfig;
 pub use error::{AgentError, Result};
 pub use identity::DeviceIdentity;
+pub use secret::{
+    clear_tokens, default_secret_store, load_tokens, save_tokens, FileSecretStore, SecretStore, TokenBundle,
+    SECRET_SERVICE, TOKENS_KEY,
+};
 pub use single_instance::SingleInstance;
 pub use store::AgentStore;
 pub use subsystem::{HealthStatus, Subsystem};

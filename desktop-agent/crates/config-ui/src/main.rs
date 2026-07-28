@@ -24,7 +24,10 @@ use desksync_backend::{
 use desksync_capture::{CaptureLoop, CaptureSettings, ScreenCapturer};
 use desksync_core::identity::DeviceIdentity;
 use desksync_core::subsystem::Subsystem;
-use desksync_core::{Agent, AgentConfig, AgentStore, Autostart, SingleInstance};
+use desksync_core::{
+    clear_tokens, default_secret_store, save_tokens, Agent, AgentConfig, AgentStore, Autostart, SingleInstance,
+    TokenBundle,
+};
 use desksync_devtools::{DevToolsService, SshHost, SshHostRegistry, TokioCommandRunner, Workspace, WorkspaceRegistry};
 use desksync_input::{Clipboard, InputInjector, InputRouter};
 
@@ -123,6 +126,44 @@ async fn run_pairing(store: &AgentStore, config: &AgentConfig, identity: &Device
         println!("  Expires at: {}", outcome.challenge.expires_at);
     }
     println!("\nRegistered device id: {}\n", outcome.device_id);
+    Ok(())
+}
+
+/// Human-readable label for where secrets are persisted in this build.
+fn secret_backend_label() -> &'static str {
+    if cfg!(feature = "native") {
+        "the OS keychain"
+    } else {
+        "an owner-only file"
+    }
+}
+
+/// Authenticate and persist the resulting tokens (+ current device id) to the
+/// OS credential store so subsequent runs don't need credentials in the
+/// environment. Credentials come from `DESKSYNC_EMAIL`/`DESKSYNC_PASSWORD`;
+/// a browser-based Google sign-in replaces this in a later phase.
+async fn run_login(store: &AgentStore, config: &AgentConfig) -> anyhow::Result<()> {
+    let creds = Credentials::from_env()?;
+    let client = BackendClient::new(&config.api_url).context("building backend client")?;
+    let tokens = client.login(&creds.email, &creds.password).await.context("login failed")?;
+
+    let secrets = default_secret_store(store.dir());
+    let bundle = TokenBundle {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        device_id: config.device_id.clone(),
+    };
+    save_tokens(secrets.as_ref(), &bundle).context("persisting credentials")?;
+
+    println!("Signed in. Credentials stored securely in {}.", secret_backend_label());
+    Ok(())
+}
+
+/// Remove any persisted credentials from the secret store.
+fn run_logout(store: &AgentStore) -> anyhow::Result<()> {
+    let secrets = default_secret_store(store.dir());
+    clear_tokens(secrets.as_ref()).context("clearing credentials")?;
+    println!("Signed out. Stored credentials removed from {}.", secret_backend_label());
     Ok(())
 }
 
@@ -254,11 +295,16 @@ async fn main() -> anyhow::Result<()> {
 
     let identity = store.load_or_create_identity().context("loading device identity")?;
 
-    // `desksync-agent pair` runs the enrollment + pairing-initiation flow and
-    // exits. It does not take the single-instance lock so it can be run while
-    // the daemon is active.
-    if std::env::args().nth(1).as_deref() == Some("pair") {
-        return run_pairing(&store, &config, &identity).await;
+    // One-shot subcommands run before the single-instance lock so they can be
+    // used while the daemon is active:
+    //   pair    enroll + initiate pairing (prints a QR)
+    //   login   authenticate and store credentials in the OS keychain
+    //   logout  remove stored credentials
+    match std::env::args().nth(1).as_deref() {
+        Some("pair") => return run_pairing(&store, &config, &identity).await,
+        Some("login") => return run_login(&store, &config).await,
+        Some("logout") => return run_logout(&store),
+        _ => {}
     }
 
     // Single-instance guard for the daemon. Held for the life of the process.

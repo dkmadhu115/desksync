@@ -6,6 +6,13 @@ rust-version.workspace = true
 license.workspace = true
 description = "Core runtime, configuration, and shared types for the DeskSync desktop agent."
 
+[features]
+default = []
+# Store secrets in the OS credential store (macOS Keychain / Windows Credential
+# Manager / Linux Secret Service) instead of the owner-only file fallback.
+# Enabled on desktop builds; off by default so headless CI needs no keychain.
+os-keychain = ["dep:keyring"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
@@ -16,8 +23,11 @@ x25519-dalek.workspace = true
 getrandom.workspace = true
 hex.workspace = true
 base64.workspace = true
+zeroize.workspace = true
 fs4.workspace = true
 dirs.workspace = true
+# OS-native credential storage (optional; enabled via the `os-keychain` feature).
+keyring = { version = "3", optional = true, features = ["apple-native", "windows-native", "sync-secret-service"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }

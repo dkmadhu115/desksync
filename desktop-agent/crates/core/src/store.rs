@@ -102,7 +102,7 @@ impl AgentStore {
 /// Write `bytes` to `path` atomically: write to a sibling temp file, set its
 /// permissions, then rename over the destination. `mode` is applied on Unix and
 /// ignored elsewhere.
-fn atomic_write(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
     let tmp = path.with_extension("tmp");
     fs::write(&tmp, bytes)?;
     set_mode(&tmp, mode)?;

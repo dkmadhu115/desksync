@@ -33,6 +33,11 @@ pub enum AgentError {
     #[error("crypto error: {0}")]
     Crypto(String),
 
+    /// Reading or writing a secret to the OS credential store (or its file
+    /// fallback) failed.
+    #[error("secret store error: {0}")]
+    Secret(String),
+
     /// Serialization/deserialization of persisted state failed.
     #[error("serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
