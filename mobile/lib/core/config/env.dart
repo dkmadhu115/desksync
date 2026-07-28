@@ -1,18 +1,20 @@
 /// Compile-time environment configuration.
 ///
 /// Values are provided via `--dart-define` at build time so no secrets are
-/// baked into source. Defaults target a local backend for development.
+/// baked into source. The defaults are the hosted service, so a release build
+/// with no defines at all is still a working app; override them to point at a
+/// backend you are running yourself.
 abstract final class Env {
   /// Base URL of the API gateway.
   static const String apiBaseUrl = String.fromEnvironment(
     'DESKSYNC_API_BASE_URL',
-    defaultValue: 'http://localhost:8080',
+    defaultValue: 'https://dkmadhutech.com',
   );
 
   /// Secure WebSocket URL of the signaling service.
   static const String signalingUrl = String.fromEnvironment(
     'DESKSYNC_SIGNALING_URL',
-    defaultValue: 'ws://localhost:8085/api/v1/signaling',
+    defaultValue: 'wss://dkmadhutech.com/api/v1/signaling',
   );
 
   /// Request timeout in milliseconds.

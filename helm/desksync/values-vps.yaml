@@ -27,16 +27,34 @@ podDisruptionBudget:
   enabled: false
 topologySpreadConstraints: []
 
-# No ingress controller / TLS on a bare IP — public services are exposed
-# directly via k3s ServiceLB (klipper) on the node IP at their service port.
+# Traefik (bundled with k3s) terminates TLS for the domain on 443 and routes by
+# path: /api/v1/signaling to signaling, everything else to the gateway. The
+# certificate is issued by cert-manager over HTTP-01, which needs this host's DNS
+# A record pointing here and port 80 reachable.
+#
+# A domain is not cosmetic: Google refuses to register a redirect URI on a bare
+# IP, so federated sign-in is only possible through this host.
 ingress:
-  enabled: false
+  enabled: true
+  className: traefik
+  host: dkmadhutech.com
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # HTTPS only: serve this router on the TLS entrypoint alone, so the API and
+    # its bearer tokens are never answered in plaintext on port 80. The ACME
+    # challenge still works — cert-manager publishes its own short-lived Ingress
+    # for that, which is not restricted to an entrypoint.
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+  tls:
+    enabled: true
+    secretName: desksync-tls
 
 config:
   environment: production
   logLevel: info
   logFormat: json
-  signalingPublicUrl: ws://200.97.163.131:8085/api/v1/signaling/ws
+  # Through the TLS ingress, so wss:// rather than a bare-IP ws://.
+  signalingPublicUrl: wss://dkmadhutech.com/api/v1/signaling/ws
   stunUrls: stun:stun.l.google.com:19302
   turnUrls: turn:200.97.163.131:3478
   turnRealm: desksync
@@ -68,7 +86,8 @@ migrations:
     name: migrations
     tag: local
 
-# Secret placeholders — overridden at install time via --set-string.
+# Secret placeholders — overridden at install time via --set-string, including
+# GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET for Google sign-in.
 secrets:
   create: true
   data:
@@ -77,7 +96,10 @@ secrets:
     SIGNALING_TICKET_SECRET: change-me-signaling-secret-min-32-bytes
     TURN_STATIC_AUTH_SECRET: change-me-turn-secret
 
-# Expose gateway + signaling on the node IP (8080 / 8085) via ServiceLB.
+# Also exposed on the node IP (8080 / 8085) via ServiceLB, alongside the ingress.
+# Kept so clients pinned to the old http://IP:8080 base URL — an installed APK,
+# an agent whose config has not been repointed — keep working during the move to
+# the domain.
 services:
   gateway:
     serviceType: LoadBalancer

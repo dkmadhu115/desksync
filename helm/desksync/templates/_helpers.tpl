@@ -117,3 +117,31 @@ Effective REDIS_ADDR (in-cluster redis service or operator-supplied value).
 {{- define "desksync.redisAddr" -}}
 {{- if .Values.redis.enabled -}}redis:6379{{- else -}}{{- .Values.secrets.data.REDIS_ADDR -}}{{- end -}}
 {{- end -}}
+
+{{/*
+Externally reachable base URL of the API, derived from the ingress host so it is
+configured in exactly one place. Empty when there is no ingress, in which case
+clients reach services directly on the node IP and OAuth cannot be used (an
+identity provider will not redirect to a bare IP).
+*/}}
+{{- define "desksync.publicBaseUrl" -}}
+{{- if and .Values.ingress.enabled .Values.ingress.host -}}
+{{- $scheme := ternary "https" "http" .Values.ingress.tls.enabled -}}
+{{- printf "%s://%s" $scheme .Values.ingress.host -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+OAuth callback URL for a provider. This must match the redirect URI registered
+with the provider *character for character*, which is why it is derived from the
+ingress host rather than repeated by hand.
+Usage: {{ include "desksync.oauthRedirectUrl" (list . "google") }}
+*/}}
+{{- define "desksync.oauthRedirectUrl" -}}
+{{- $root := index . 0 -}}
+{{- $provider := index . 1 -}}
+{{- $base := include "desksync.publicBaseUrl" $root -}}
+{{- if $base -}}
+{{- printf "%s/api/v1/auth/oauth/%s/callback" $base $provider -}}
+{{- end -}}
+{{- end -}}

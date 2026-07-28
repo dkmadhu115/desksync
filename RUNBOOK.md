@@ -43,26 +43,45 @@ your Mac from an Android phone). Read this first when picking the project back u
 
 ---
 
-## 2. Current live environment (Azure)
+## 2. Current live environment (Hostinger VPS, `dkmadhutech.com`)
 
-Everything is deployed on an Azure VM with **k3s** in the `desksync` namespace.
+Everything is deployed on the Hostinger VPS with **k3s** in the `desksync`
+namespace, reached through **`dkmadhutech.com`** over TLS.
 
 | Item | Value |
 |------|-------|
-| VM SSH | `apollo@20.109.60.233` (password in your vault) |
-| API base (gateway) | `http://20.109.60.233:8080` |
-| Signaling (WS) | `ws://20.109.60.233:8085/api/v1/signaling` |
-| TURN relay | `20.109.60.233:3478` (coturn, relay ports `50000-50100`) |
-| k8s namespace | `desksync` (Helm release `desksync`) |
-| Test account | `dkmadhu2109@gmail.com` (password in your vault) |
+| VPS SSH | `ssh hostinger` (key `~/.ssh/hostinger_ed25519`), IP `200.97.163.131` |
+| API base (gateway) | `https://dkmadhutech.com` |
+| Signaling (WS) | `wss://dkmadhutech.com/api/v1/signaling` |
+| TURN relay | `200.97.163.131:3478` (coturn, relay ports `50000-50100`) |
+| k8s namespace | `desksync` (Helm release `desksync`, values `values-vps.yaml`) |
+| Ingress | Traefik (bundled with k3s), TLS from cert-manager / Let's Encrypt |
 
-> **Azure NSG:** inbound rules must be open for `8080/tcp`, `8085/tcp`,
-> `3478/udp+tcp`, and `50000-50100/udp` (TURN relay). If ICE fails but signaling
-> works, check these first.
+Traefik routes by path on 443: `/api/v1/signaling` to the signaling service,
+everything else to the gateway. The gateway and signaling services are *also*
+still published on the node IP (`:8080` / `:8085`) so clients pinned to the old
+`http://IP:8080` base URL keep working.
 
-Toolchain already installed on the VM: `/opt/flutter`, `/opt/android-sdk`,
-project at `/home/apollo/DeskSync`, `/tmp/cloudflared`, nginx serving APKs from
-`/var/www/apk` on ports 80 & 8000.
+### Why a domain, not an IP
+
+Google will not accept a redirect URI on a bare IP, so federated sign-in is only
+possible through a hostname with a real certificate. Everything else — the
+`dkmadhutech.com` A record, cert-manager, the ingress — exists to satisfy that.
+The registered redirect URI is, character for character:
+
+```
+https://dkmadhutech.com/api/v1/auth/oauth/google/callback
+```
+
+The chart derives it from `ingress.host` (see `desksync.oauthRedirectUrl` in
+`_helpers.tpl`) precisely so it cannot drift from what Google has on file.
+
+> **Previous home (Azure, `20.109.60.233`):** superseded. That box is shared with
+> the `apollo-mech` stack, whose host nginx owns port 80 and whose Traefik owns
+> 443 without the `kubernetesingress` provider — so neither ACME HTTP-01 nor a
+> plain Ingress works there without disturbing another product. Its `desksync`
+> namespace and database are still running but no longer the target; accounts and
+> device registrations there do **not** exist on the VPS.
 
 ---
 
@@ -263,13 +282,22 @@ If the refresh token really is rejected, the agent logs `session expired; run
 > Google needs is the **backend callback**:
 >
 > ```text
-> http://20.109.60.233:8080/api/v1/auth/oauth/google/callback     # Azure
+> https://dkmadhutech.com/api/v1/auth/oauth/google/callback       # live
 > http://localhost:8080/api/v1/auth/oauth/google/callback         # local dev
 > ```
 >
-> Set `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` / `GOOGLE_OAUTH_REDIRECT_URL`
-> in the backend's environment (local: the gitignored `.env`; Kubernetes: the
-> chart's secret values). Never commit them to `.env.example`.
+> Google accepts `http://` only for `localhost`, which is why the live entry is a
+> domain with a certificate and not `http://<ip>:8080` — an IP is rejected outright.
+>
+> Supply `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` to the backend
+> (local: the gitignored `.env`; Kubernetes: `--set-string secrets.data.…` at
+> install time — see §10). `GOOGLE_OAUTH_REDIRECT_URL` is derived from
+> `ingress.host` by the chart, so it does not need setting. Never commit the
+> credentials to `.env.example`.
+>
+> If `/oauth/google/start` answers `{"error":"not_found","message":"oauth provider
+> not configured"}`, the client id and secret never reached the auth service — the
+> provider registry is empty. Check the Secret, not the Google Console.
 
 ### Agent config
 
@@ -279,8 +307,8 @@ backend and controls capture quality:
 ```json
 {
   "device_id": "<uuid or 'unregistered' to force re-pair>",
-  "backend_url": "ws://20.109.60.233:8085/api/v1/signaling",
-  "api_url": "http://20.109.60.233:8080",
+  "backend_url": "wss://dkmadhutech.com/api/v1/signaling",
+  "api_url": "https://dkmadhutech.com",
   "codec": "vp9",
   "target_fps": 20,
   "max_height": 720,
@@ -288,6 +316,10 @@ backend and controls capture quality:
   "heartbeat_secs": 15
 }
 ```
+
+`api_url` defaults to `https://dkmadhutech.com` when absent, so a fresh install
+reaches the hosted service with no configuration. Point it at
+`http://localhost:8080` to work against a backend you are running yourself.
 
 To re-point at a different backend, edit `backend_url` + `api_url`, set
 `device_id` to `unregistered`, and restart — the agent re-registers automatically
@@ -356,15 +388,26 @@ test builds.
 
 ## 4. Mobile app (controller side)
 
-### Build the APK (on the Azure VM — has the Android SDK)
+### Build the APK (on the Azure VM — it has the Android SDK and Flutter)
+
+The Azure VM is no longer the backend, but it is still the build host: it carries
+`/opt/flutter` and `/opt/android-sdk`.
 
 ```bash
 ssh apollo@20.109.60.233
 export PATH=$PATH:/opt/flutter/bin ANDROID_HOME=/opt/android-sdk ANDROID_SDK_ROOT=/opt/android-sdk
 cd /home/apollo/DeskSync/mobile
+flutter build apk --release --split-per-abi
+```
+
+The endpoints now default to `https://dkmadhutech.com` in `lib/core/config/env.dart`,
+so no `--dart-define` is needed for a production build. Override them only to aim
+the app elsewhere:
+
+```bash
 flutter build apk --release --split-per-abi \
-  --dart-define=DESKSYNC_API_BASE_URL=http://20.109.60.233:8080 \
-  --dart-define=DESKSYNC_SIGNALING_URL=ws://20.109.60.233:8085/api/v1/signaling
+  --dart-define=DESKSYNC_API_BASE_URL=http://192.168.1.10:8080 \
+  --dart-define=DESKSYNC_SIGNALING_URL=ws://192.168.1.10:8085/api/v1/signaling
 ```
 
 Outputs in `build/app/outputs/flutter-apk/`:
@@ -401,29 +444,86 @@ Then download `https://<tunnel-host>/desksync.apk` on the phone and install.
 
 ---
 
-## 5. Deploy / redeploy the backend (k3s on Azure)
+## 5. Deploy / redeploy the backend (k3s on the VPS)
+
+Source lives at `/opt/desksync` on the VPS (a plain copy, not a checkout — sync
+it from here). Images are built on the node and imported into k3s' containerd;
+k3s does **not** read from dockerd, hence the explicit import.
 
 ```bash
-ssh apollo@20.109.60.233
-cd /home/apollo/DeskSync
+# 1. Ship the code that matters (never .env — it holds real credentials)
+rsync -az --delete backend/ hostinger:/opt/desksync/backend/
+rsync -az --delete helm/    hostinger:/opt/desksync/helm/
+rsync -az --delete docker/  hostinger:/opt/desksync/docker/
 
-# Build service images and import into k3s' containerd (k3s does NOT use dockerd):
-#   docker build ... -t desksync/<svc>:local
-#   docker save desksync/<svc>:local | sudo k3s ctr images import -
-
-# Install / upgrade the release:
-sudo helm upgrade --install desksync ./helm/desksync \
-  -n desksync --create-namespace \
-  -f ./helm/desksync/values-azure.yaml
-
-# Check:
-sudo k3s kubectl get pods -n desksync
-sudo k3s kubectl get svc  -n desksync
+# 2. Build + import only what changed, e.g. the auth service and migrations
+ssh hostinger
+cd /opt/desksync
+docker build -f docker/Dockerfile.service --build-arg SERVICE=auth -t desksync/auth:local backend
+docker build -f docker/Dockerfile.migrations -t desksync/migrations:local .
+docker save desksync/auth:local       | sudo k3s ctr images import -
+docker save desksync/migrations:local | sudo k3s ctr images import -
 ```
 
-`values-azure.yaml` highlights: images pulled from local containerd, ingress off
-(uses ServiceLB), gateway + signaling exposed via `LoadBalancer`, and coturn with
-`externalIP: 20.109.60.233/10.2.0.4` (1:1 NAT) and relay ports `50000-50100`.
+### Upgrading without destroying the session secrets
+
+`values-vps.yaml` carries `change-me` placeholders, so a plain `helm upgrade`
+would rewrite `JWT_ACCESS_SECRET` and friends — invalidating every issued token
+and locking out every signed-in client. Read the live values back and pass them
+in. The same applies to the Postgres password, which `DATABASE_URL` is built
+from: replacing it leaves the app unable to reach its own database.
+
+```bash
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+cd /opt/desksync
+sec() { kubectl get secret desksync-secrets -n desksync -o jsonpath="{.data.$1}" | base64 -d; }
+JA=$(sec JWT_ACCESS_SECRET); JR=$(sec JWT_REFRESH_SECRET)
+SG=$(sec SIGNALING_TICKET_SECRET); TN=$(sec TURN_STATIC_AUTH_SECRET)
+PG=$(sec DATABASE_URL | sed -E 's|^postgres://[^:]*:([^@]*)@.*$|\1|')
+. /tmp/oauth.env   # GOOGLE_OAUTH_CLIENT_ID / _SECRET, mode 600, not in git
+
+helm upgrade --install desksync helm/desksync -n desksync \
+  -f helm/desksync/values-vps.yaml \
+  --set-string postgres.auth.password="$PG" \
+  --set-string secrets.data.JWT_ACCESS_SECRET="$JA" \
+  --set-string secrets.data.JWT_REFRESH_SECRET="$JR" \
+  --set-string secrets.data.SIGNALING_TICKET_SECRET="$SG" \
+  --set-string secrets.data.TURN_STATIC_AUTH_SECRET="$TN" \
+  --set-string secrets.data.GOOGLE_OAUTH_CLIENT_ID="$GOOGLE_OAUTH_CLIENT_ID" \
+  --set-string secrets.data.GOOGLE_OAUTH_CLIENT_SECRET="$GOOGLE_OAUTH_CLIENT_SECRET" \
+  --wait --timeout 6m
+```
+
+Database migrations run as a Helm pre-upgrade hook Job — `kubectl get jobs -n
+desksync` shows each revision's result.
+
+### TLS (one-time per cluster)
+
+```bash
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml
+kubectl apply -f helm/cluster-issuer-letsencrypt.yaml     # letsencrypt-prod + -staging
+```
+
+The Ingress requests its certificate through the `cert-manager.io/cluster-issuer`
+annotation in `values-vps.yaml`; renewal is automatic. Validation is HTTP-01, so
+it needs the host's A record pointing at the node and port 80 open.
+
+```bash
+kubectl get certificate,challenge -n desksync   # READY=False + a pending challenge = DNS not there yet
+```
+
+Until the certificate is issued Traefik serves its own self-signed default, which
+Go and Flutter clients reject — the agent reports a TLS error, not an auth error.
+To test routing before DNS propagates, bypass both:
+
+```bash
+curl -k --resolve dkmadhutech.com:443:200.97.163.131 https://dkmadhutech.com/health
+```
+
+`values-vps.yaml` highlights: images from local containerd (`pullPolicy: Never`),
+Traefik ingress with TLS on `dkmadhutech.com`, gateway + signaling *also* on the
+node IP (`:8080` / `:8085`) for clients still pinned to it, and coturn on
+`200.97.163.131:3478` with relay ports `50000-50100`.
 
 ---
 

@@ -1,0 +1,48 @@
+# Let's Encrypt issuers for the DeskSync API host.
+#
+# Certificates are requested automatically: the Ingress carries
+# `cert-manager.io/cluster-issuer: letsencrypt-prod`, cert-manager creates the
+# Certificate, solves an HTTP-01 challenge through the same ingress controller,
+# and renews at two thirds of the lifetime with no operator involvement.
+#
+# HTTP-01 requires two things of the host named in the Ingress: its DNS A record
+# must resolve to this cluster, and port 80 must be reachable from the internet.
+# Until both hold, the Certificate stays in a retrying state and the Ingress
+# serves Traefik's self-signed default — which browsers and Go clients reject.
+#
+# Apply once per cluster:
+#   kubectl apply -f helm/cluster-issuer-letsencrypt.yaml
+#
+# `letsencrypt-staging` issues from Let's Encrypt's untrusted test CA. Use it
+# while iterating on ingress or DNS: the production endpoint allows only a
+# handful of identical certificates per week, and a burnt quota means waiting.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    # Expiry warnings and account recovery go here.
+    email: madhu.dk@oneconvergence.com
+    privateKeySecretRef:
+      name: letsencrypt-staging-account-key
+    solvers:
+      - http01:
+          ingress:
+            class: traefik
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: madhu.dk@oneconvergence.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - http01:
+          ingress:
+            class: traefik

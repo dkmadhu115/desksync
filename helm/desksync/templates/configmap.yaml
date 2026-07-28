@@ -20,6 +20,19 @@ data:
   TURN_URLS: {{ .Values.config.turnUrls | quote }}
   RATE_LIMIT_RPS: {{ .Values.config.rateLimitRps | quote }}
   RATE_LIMIT_BURST: {{ .Values.config.rateLimitBurst | quote }}
+  {{- /*
+  OAuth callbacks. The client id and secret live in the Secret; only the
+  redirect URL is public. An explicit override wins, otherwise it follows the
+  ingress host. Omitted entirely when neither is available, so the auth service
+  reports "oauth provider not configured" rather than sending users to a URL
+  that cannot work.
+  */}}
+  {{- with (.Values.config.googleOauthRedirectUrl | default (include "desksync.oauthRedirectUrl" (list . "google"))) }}
+  GOOGLE_OAUTH_REDIRECT_URL: {{ . | quote }}
+  {{- end }}
+  {{- with (.Values.config.githubOauthRedirectUrl | default (include "desksync.oauthRedirectUrl" (list . "github"))) }}
+  GITHUB_OAUTH_REDIRECT_URL: {{ . | quote }}
+  {{- end }}
   {{- with .Values.config.otelExporterOtlpEndpoint }}
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ . | quote }}
   {{- end }}

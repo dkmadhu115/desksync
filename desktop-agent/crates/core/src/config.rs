@@ -44,8 +44,15 @@ pub struct AgentConfig {
     pub heartbeat_secs: u64,
 }
 
+/// The hosted DeskSync service, used when the config file does not name one —
+/// which is the case for a fresh install, before `setup` or `login` has written
+/// anything. It is a domain rather than an address because sign-in depends on it:
+/// Google will not register a redirect URI pointing at a bare IP.
+///
+/// Point `api_url` at `http://localhost:8080` in `config.json` to work against a
+/// backend you are running yourself.
 fn default_api_url() -> String {
-    "http://localhost:8080".into()
+    "https://dkmadhutech.com".into()
 }
 fn default_fps() -> u32 {
     30

@@ -157,6 +157,13 @@ one session and leaves the account's other devices alone. Within
 `JWT_REFRESH_REUSE_GRACE` a spent token may be presented again — that is a client
 retrying a rotation whose response it never received, not a thief.
 
+Google sign-in is **mediated by the backend**: the desktop opens a loopback PKCE
+flow, Google redirects to the *backend's* callback, and the desktop exchanges the
+result. Only the backend ever holds the client secret. This is also why the
+deployment needs a real hostname with a certificate rather than an IP — Google
+refuses to register a redirect URI on a bare address, so the chart derives the
+callback from `ingress.host` and the API is published only over TLS.
+
 ### 4.2 Pairing (one-time trust)
 
 ```mermaid
@@ -361,7 +368,7 @@ docker compose -f docker/docker-compose.yml up --build
 
 # Backend (Kubernetes)
 helm upgrade --install desksync ./helm/desksync -n desksync --create-namespace \
-  -f ./helm/desksync/values-azure.yaml
+  -f ./helm/desksync/values-vps.yaml
 
 # Desktop agent (the host / Mac being controlled)
 cd desktop-agent
@@ -369,7 +376,7 @@ cargo build -p desksync-agent --features native
 ./target/debug/desksync-agent setup     # sign in, permissions, register, service
 ./target/debug/desksync-agent           # run it (DESKSYNC_LOG=debug for detail)
 
-# Mobile app
+# Mobile app (endpoints default to the hosted service; override to aim elsewhere)
 cd mobile
 flutter build apk --release --split-per-abi \
   --dart-define=DESKSYNC_API_BASE_URL=http://<host>:8080 \

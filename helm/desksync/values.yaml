@@ -45,6 +45,13 @@ config:
   otelExporterOtlpEndpoint: ""
   rateLimitRps: "20"
   rateLimitBurst: "40"
+  # OAuth callback URLs. Left empty they follow the ingress host, which is what
+  # you want: the value has to match the redirect URI registered with Google or
+  # GitHub exactly, so deriving it from one place avoids a silent mismatch. Set
+  # these only when the provider must call back somewhere else (a proxy in
+  # front, or a legacy URI you cannot change).
+  googleOauthRedirectUrl: ""
+  githubOauthRedirectUrl: ""
 
 # Secrets. In production, provision these through an external secret manager and
 # set existingSecret to the resulting Secret name (leaving create=false). For
@@ -60,6 +67,13 @@ secrets:
     JWT_REFRESH_SECRET: "change-me-refresh-secret-min-32-bytes"
     SIGNALING_TICKET_SECRET: "change-me-signaling-secret-min-32-bytes"
     TURN_STATIC_AUTH_SECRET: "change-me-turn-secret"
+    # Federated sign-in. Empty means the provider is simply not offered: the auth
+    # service answers /oauth/<provider>/start with "oauth provider not
+    # configured". Supply at install time rather than committing them, e.g.
+    #   --set-string secrets.data.GOOGLE_OAUTH_CLIENT_ID=... \
+    #   --set-string secrets.data.GOOGLE_OAUTH_CLIENT_SECRET=...
+    GOOGLE_OAUTH_CLIENT_ID: ""
+    GOOGLE_OAUTH_CLIENT_SECRET: ""
 
 serviceAccount:
   create: true
