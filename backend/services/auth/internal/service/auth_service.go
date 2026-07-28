@@ -170,14 +170,28 @@ func (s *Service) Logout(ctx context.Context, refreshToken string) error {
 }
 
 // UpsertOAuthUser finds or creates a user for a federated identity and issues
-// tokens. Used by the OAuth callback flow.
+// tokens. Used by the browser OAuth callback flow.
 func (s *Service) UpsertOAuthUser(ctx context.Context, p domain.Provider, providerUserID, email, displayName string, md Metadata) (Tokens, error) {
+	user, err := s.ResolveOAuthUser(ctx, p, providerUserID, email, displayName)
+	if err != nil {
+		return Tokens{}, err
+	}
+	return s.issueTokens(ctx, user, md)
+}
+
+// ResolveOAuthUser finds or creates the user behind a federated identity and
+// links the identity, without issuing tokens.
+//
+// The desktop sign-in flow needs the user *without* a token pair, because the
+// tokens must be minted later for the desktop process rather than the browser
+// that completed the consent screen.
+func (s *Service) ResolveOAuthUser(ctx context.Context, p domain.Provider, providerUserID, email, displayName string) (domain.User, error) {
 	email = normalizeEmail(email)
 
 	if user, err := s.users.GetByProviderIdentity(ctx, p, providerUserID); err == nil {
-		return s.issueTokens(ctx, user, md)
+		return user, nil
 	} else if !errors.Is(err, domain.ErrUserNotFound) {
-		return Tokens{}, apperr.Wrap(apperr.CodeInternal, "identity lookup failed", err)
+		return domain.User{}, apperr.Wrap(apperr.CodeInternal, "identity lookup failed", err)
 	}
 
 	// Link to an existing email account, or create a new OAuth-only account.
@@ -190,10 +204,10 @@ func (s *Service) UpsertOAuthUser(ctx context.Context, p domain.Provider, provid
 			IsActive:      true,
 		})
 		if err != nil {
-			return Tokens{}, apperr.Wrap(apperr.CodeInternal, "failed to create user", err)
+			return domain.User{}, apperr.Wrap(apperr.CodeInternal, "failed to create user", err)
 		}
 	} else if err != nil {
-		return Tokens{}, apperr.Wrap(apperr.CodeInternal, "lookup failed", err)
+		return domain.User{}, apperr.Wrap(apperr.CodeInternal, "lookup failed", err)
 	}
 
 	if err := s.users.LinkOAuthIdentity(ctx, domain.OAuthIdentity{
@@ -201,7 +215,27 @@ func (s *Service) UpsertOAuthUser(ctx context.Context, p domain.Provider, provid
 		Provider:       p,
 		ProviderUserID: providerUserID,
 	}); err != nil {
-		return Tokens{}, apperr.Wrap(apperr.CodeInternal, "failed to link identity", err)
+		return domain.User{}, apperr.Wrap(apperr.CodeInternal, "failed to link identity", err)
+	}
+	return user, nil
+}
+
+// IssueForUserID mints a token pair for an already-authenticated user id.
+//
+// Used to complete the desktop sign-in flow: the OAuth callback authenticates
+// the user in the browser but the tokens must be handed to the desktop process
+// instead. Only the user id is held (briefly) between those two steps, so no
+// token ever sits at rest.
+func (s *Service) IssueForUserID(ctx context.Context, userID string, md Metadata) (Tokens, error) {
+	user, err := s.users.GetUserByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, domain.ErrUserNotFound) {
+			return Tokens{}, apperr.New(apperr.CodeUnauthorized, "unknown user")
+		}
+		return Tokens{}, apperr.Wrap(apperr.CodeInternal, "lookup failed", err)
+	}
+	if !user.IsActive {
+		return Tokens{}, apperr.New(apperr.CodeForbidden, "account is disabled")
 	}
 	return s.issueTokens(ctx, user, md)
 }

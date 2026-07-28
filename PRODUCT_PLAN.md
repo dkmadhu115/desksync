@@ -79,19 +79,21 @@ device registration. macOS first (our live test box), then Windows, then Linux.
   compiles with the file impl; secrets never written to `config.json` or logs.
 - **Status: implemented in the first commit of this plan.**
 
-### Epic 1.2 — Google sign-in (desktop, browser loopback + PKCE)
-- Add `desksync-backend::oauth`: start a localhost loopback listener, open the
-  system browser to the backend's Google OAuth authorize URL with a PKCE
-  challenge + `redirect_uri=http://127.0.0.1:<port>/callback`, receive the code,
-  exchange it via the gateway for `{access, refresh, device_id}`.
-- Backend: confirm/extend the `auth` service to support the loopback redirect and
-  a token exchange for native clients (reuse existing Google OAuth; add a
-  desktop client id + allowed loopback redirect).
-- Replace `Credentials::from_env()` as the primary path; env remains a fallback
-  for CI/dev.
-- **Acceptance:** `desksync-agent login` opens the browser, completes sign-in,
-  and persists tokens to the keychain; heartbeat/session use stored tokens with
-  refresh rotation.
+### Epic 1.2 — Google sign-in (desktop, browser loopback + PKCE) ✅
+- `desksync-backend::oauth`: binds a loopback listener, opens the system browser
+  at the backend's `/auth/oauth/google/start?redirect_port&code_challenge`, reads
+  the one-time code from the loopback callback, and redeems it with the PKCE
+  verifier.
+- Backend `auth`: `start` accepts native-client params and records the pending
+  flow; the Google callback resolves the account, mints a **one-time grant**, and
+  redirects to `http://127.0.0.1:<port>/callback?code=…`; new
+  `POST /auth/oauth/desktop/exchange` verifies `S256(verifier)` and issues tokens.
+  The Google **client secret never leaves the backend**, and only a user id (never
+  a token) sits at rest between the two legs.
+- `desksync-agent login` uses the browser by default; `login --password` keeps the
+  env-based path for CI/headless.
+- **Remaining for full acceptance:** have the heartbeat/session runtime read the
+  stored tokens (currently still env-driven) — folded into Epic 1.3.
 
 ### Epic 1.3 — Automatic device registration
 - On first authenticated start with no `device_id`: generate identity (exists),

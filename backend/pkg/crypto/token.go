@@ -39,6 +39,25 @@ func EqualTokenHash(token, storedHash string) bool {
 	return subtle.ConstantTimeCompare([]byte(computed), []byte(storedHash)) == 1
 }
 
+// S256Challenge returns the RFC 7636 PKCE "S256" code challenge for a verifier:
+// base64url(SHA-256(verifier)) with no padding.
+//
+// Native clients (the desktop agent) keep the verifier in memory and send only
+// this challenge when starting a sign-in, then present the verifier to redeem
+// the result. That binds the redemption to the process that began the flow, so a
+// leaked one-time code alone is not enough to obtain tokens.
+func S256Challenge(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// EqualS256Challenge reports whether verifier matches challenge, comparing in
+// constant time.
+func EqualS256Challenge(verifier, challenge string) bool {
+	computed := S256Challenge(verifier)
+	return subtle.ConstantTimeCompare([]byte(computed), []byte(challenge)) == 1
+}
+
 // GenerateNumericCode returns a cryptographically random numeric code of the
 // given length (e.g. an 8-digit pairing code). Uses rejection-free modulo over
 // crypto/rand big integers to avoid modulo bias.

@@ -11,10 +11,15 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
-tokio = { workspace = true }
+# `net` + `io-util` back the loopback listener used by the browser sign-in flow.
+tokio = { workspace = true, features = ["net", "io-util"] }
 reqwest = { workspace = true }
 qrcode = { workspace = true }
 tracing = { workspace = true }
+# PKCE for the browser sign-in flow: random verifier, base64url(SHA-256) challenge.
+base64 = { workspace = true }
+sha2 = { workspace = true }
+getrandom = { workspace = true }
 
 [dev-dependencies]
 # The client tests spin up a tiny in-process HTTP server over a TcpListener, so

@@ -20,6 +20,14 @@ type refreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
+// desktopExchangeRequest is the body for POST /auth/oauth/desktop/exchange: the
+// one-time code the browser handed to the desktop's loopback listener, plus the
+// PKCE verifier proving this is the process that started the sign-in.
+type desktopExchangeRequest struct {
+	Code         string `json:"code"`
+	CodeVerifier string `json:"code_verifier"`
+}
+
 // tokenResponse is the standard authentication result.
 type tokenResponse struct {
 	AccessToken  string  `json:"access_token"`

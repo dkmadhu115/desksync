@@ -40,6 +40,22 @@ type OAuthIdentity struct {
 	CreatedAt      time.Time
 }
 
+// DesktopFlow is the pending context of a native-client (desktop agent) sign-in:
+// where to hand the result back — a loopback port on the user's own machine —
+// and the PKCE challenge that must be satisfied to redeem it.
+type DesktopFlow struct {
+	RedirectPort  int    `json:"redirect_port"`
+	CodeChallenge string `json:"code_challenge"`
+}
+
+// DesktopGrant is a completed browser sign-in awaiting redemption by the desktop
+// process that started it. It holds only the user id — never tokens — so nothing
+// usable sits at rest between the two legs of the flow.
+type DesktopGrant struct {
+	UserID        string `json:"user_id"`
+	CodeChallenge string `json:"code_challenge"`
+}
+
 // RefreshToken is a persisted (hashed) refresh token in a rotation chain.
 type RefreshToken struct {
 	ID         string // JTI

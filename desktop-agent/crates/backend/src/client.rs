@@ -64,6 +64,21 @@ impl BackendClient {
     fn url(&self, path: &str) -> String {
         format!("{}{}", self.base_url, path)
     }
+
+    /// Redeem a one-time desktop sign-in code for a token pair, proving with the
+    /// PKCE verifier that this process started the flow.
+    ///
+    /// Not part of [`BackendApi`]: it belongs to the browser sign-in flow in
+    /// [`crate::oauth`] rather than the enrollment surface that trait models.
+    pub async fn exchange_desktop_code(&self, code: &str, code_verifier: &str) -> Result<TokenPair> {
+        let body = serde_json::json!({ "code": code, "code_verifier": code_verifier });
+        decode_json(
+            self.http
+                .post(self.url("/api/v1/auth/oauth/desktop/exchange"))
+                .json(&body),
+        )
+        .await
+    }
 }
 
 /// The uniform error envelope returned by the services.

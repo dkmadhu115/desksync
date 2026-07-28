@@ -138,14 +138,26 @@ fn secret_backend_label() -> &'static str {
     }
 }
 
-/// Authenticate and persist the resulting tokens (+ current device id) to the
-/// OS credential store so subsequent runs don't need credentials in the
-/// environment. Credentials come from `DESKSYNC_EMAIL`/`DESKSYNC_PASSWORD`;
-/// a browser-based Google sign-in replaces this in a later phase.
-async fn run_login(store: &AgentStore, config: &AgentConfig) -> anyhow::Result<()> {
-    let creds = Credentials::from_env()?;
-    let client = BackendClient::new(&config.api_url).context("building backend client")?;
-    let tokens = client.login(&creds.email, &creds.password).await.context("login failed")?;
+/// Authenticate and persist the resulting tokens (+ current device id) to the OS
+/// credential store so subsequent runs don't need credentials in the environment.
+///
+/// Sign-in goes through the system browser (Google) by default, which is the
+/// path a real user takes. `login --password` keeps the email/password flow for
+/// CI and headless boxes, reading `DESKSYNC_EMAIL`/`DESKSYNC_PASSWORD`.
+async fn run_login(store: &AgentStore, config: &AgentConfig, mode: LoginMode) -> anyhow::Result<()> {
+    let tokens = match mode {
+        LoginMode::Browser => desksync_backend::google_login(&config.api_url)
+            .await
+            .context("browser sign-in failed")?,
+        LoginMode::Password => {
+            let creds = Credentials::from_env()?;
+            let client = BackendClient::new(&config.api_url).context("building backend client")?;
+            client
+                .login(&creds.email, &creds.password)
+                .await
+                .context("login failed")?
+        }
+    };
 
     let secrets = default_secret_store(store.dir());
     let bundle = TokenBundle {
@@ -157,6 +169,15 @@ async fn run_login(store: &AgentStore, config: &AgentConfig) -> anyhow::Result<(
 
     println!("Signed in. Credentials stored securely in {}.", secret_backend_label());
     Ok(())
+}
+
+/// How `login` should authenticate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoginMode {
+    /// Google sign-in via the system browser (default).
+    Browser,
+    /// Email/password from the environment (CI/headless).
+    Password,
 }
 
 /// Remove any persisted credentials from the secret store.
@@ -297,12 +318,20 @@ async fn main() -> anyhow::Result<()> {
 
     // One-shot subcommands run before the single-instance lock so they can be
     // used while the daemon is active:
-    //   pair    enroll + initiate pairing (prints a QR)
-    //   login   authenticate and store credentials in the OS keychain
-    //   logout  remove stored credentials
+    //   pair               enroll + initiate pairing (prints a QR)
+    //   login              Google sign-in via the browser; stores credentials
+    //   login --password   email/password from the environment (CI/headless)
+    //   logout             remove stored credentials
     match std::env::args().nth(1).as_deref() {
         Some("pair") => return run_pairing(&store, &config, &identity).await,
-        Some("login") => return run_login(&store, &config).await,
+        Some("login") => {
+            let mode = if std::env::args().any(|a| a == "--password") {
+                LoginMode::Password
+            } else {
+                LoginMode::Browser
+            };
+            return run_login(&store, &config, mode).await;
+        }
         Some("logout") => return run_logout(&store),
         _ => {}
     }

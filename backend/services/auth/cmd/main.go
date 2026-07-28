@@ -72,6 +72,7 @@ func main() {
 		Service:       svc,
 		OAuth:         oauth.NewRegistry(config.LoadOAuth()),
 		States:        repository.NewRedisStateStore(rdb),
+		Desktops:      repository.NewRedisDesktopStore(rdb),
 		Logger:        log,
 		SecureCookies: base.IsProduction(),
 	})

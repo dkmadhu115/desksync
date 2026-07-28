@@ -118,6 +118,21 @@ func (f *fakeStates) Consume(_ context.Context, state string) (string, error) {
 
 func newTestApp(t *testing.T) *fiber.App {
 	t.Helper()
+	return newTestEnv(t, nil).app
+}
+
+// testEnv is a wired handler plus the fakes behind it, so tests can seed state
+// (users, desktop grants) that the HTTP surface then operates on.
+type testEnv struct {
+	app      *fiber.App
+	users    *fakeUsers
+	desktops *fakeDesktops
+}
+
+// newTestEnv builds the auth HTTP surface over in-memory fakes. Pass a non-nil
+// desktops store to enable the desktop sign-in endpoints.
+func newTestEnv(t *testing.T, desktops *fakeDesktops) testEnv {
+	t.Helper()
 	jwtMgr, err := jwtauth.NewManager(config.JWTConfig{
 		AccessSecret:  "0123456789abcdef0123456789abcdef",
 		RefreshSecret: "abcdef0123456789abcdef0123456789",
@@ -133,21 +148,28 @@ func newTestApp(t *testing.T) *fiber.App {
 	argon.Memory = 8 * 1024
 	argon.Iterations = 1
 
+	users := newFakeUsers()
 	svc := service.New(service.Config{
-		Users:      newFakeUsers(),
+		Users:      users,
 		Refresh:    newFakeRefresh(),
 		JWT:        jwtMgr,
 		Argon:      argon,
 		RefreshTTL: 720 * time.Hour,
 	})
-	h := New(Config{
+	cfg := Config{
 		Service: svc,
 		OAuth:   oauth.NewRegistry(config.OAuthConfig{}), // no providers configured
 		States:  newFakeStates(),
-	})
+	}
+	// A typed nil in the interface field would defeat the `desktops == nil`
+	// guards, so only set it when a store was supplied.
+	if desktops != nil {
+		cfg.Desktops = desktops
+	}
+	h := New(cfg)
 	app := fiber.New()
 	h.Register(app.Group("/api/v1"))
-	return app
+	return testEnv{app: app, users: users, desktops: desktops}
 }
 
 func do(t *testing.T, app *fiber.App, method, path, body string) (int, []byte) {

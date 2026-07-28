@@ -16,11 +16,13 @@ pub mod client;
 pub mod enrollment;
 pub mod error;
 pub mod models;
+pub mod oauth;
 pub mod qr;
 
 pub use client::{BackendApi, BackendClient};
 pub use enrollment::{Credentials, DeviceProfile, Enrollment, EnrollmentOutcome};
 pub use error::{BackendError, Result};
+pub use oauth::{google_login, login_with_provider, PkcePair, DEFAULT_LOGIN_TIMEOUT};
 pub use models::{
     Device, DeviceRegistration, IceServer, PairingChallenge, PendingSession, PendingSessions, SessionRef, TokenPair,
 };

@@ -109,6 +109,32 @@ frames data channel established
 frame stream stats  sent:30  dropped:0   ← frames flowing (dropped≈0 is good)
 ```
 
+### Signing in (Google, via the browser)
+
+```bash
+./target/debug/desksync-agent login       # opens the browser for Google sign-in
+./target/debug/desksync-agent login --password   # email/password from env (CI/headless)
+./target/debug/desksync-agent logout      # clears stored credentials
+```
+
+`login` stores the access token, refresh token, and device id in the **OS
+keychain** (macOS Keychain / Windows Credential Manager / Linux Secret Service) on
+`--features native` builds, or an owner-only `secrets.json` otherwise. Nothing
+sensitive is written to `config.json`.
+
+> **Google Cloud Console setup (one-time).** The desktop never holds the client
+> secret — it signs in *through* the backend. So the only authorized redirect URI
+> Google needs is the **backend callback**:
+>
+> ```text
+> http://20.109.60.233:8080/api/v1/auth/oauth/google/callback     # Azure
+> http://localhost:8080/api/v1/auth/oauth/google/callback         # local dev
+> ```
+>
+> Set `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` / `GOOGLE_OAUTH_REDIRECT_URL`
+> in the backend's environment (local: the gitignored `.env`; Kubernetes: the
+> chart's secret values). Never commit them to `.env.example`.
+
 ### Agent config
 
 `~/Library/Application Support/desksync/config.json` — points the agent at the
